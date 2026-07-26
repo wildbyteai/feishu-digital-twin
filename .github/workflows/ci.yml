@@ -1,0 +1,54 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.5.0"
+      - name: Verify working tree formatting
+        run: git diff --check
+      - name: Verify public snapshot policy
+        run: node bin/twin-public-snapshot.mjs policy-check release/public-snapshot.example.json
+      - name: Scan every public file for secrets and private data
+        run: node bin/twin-public-content-scan.mjs release/public-snapshot.example.json
+      - name: Reject public repository files outside the approved manifest
+        if: github.event.repository.visibility == 'public'
+        run: node bin/twin-public-content-scan.mjs release/public-snapshot.example.json --require-complete-tracked-set
+      - name: Run isolated tests
+        run: npm test
+      - name: Run package lifecycle tests with npm available
+        run: npm run test:distribution
+        env:
+          npm_config_cache: ${{ runner.temp }}/npm-cache
+      - name: Verify npm package contents
+        run: npm pack --dry-run --json --ignore-scripts
+        env:
+          npm_config_cache: ${{ runner.temp }}/npm-cache
+
+  reuse:
+    if: github.event.repository.visibility == 'public'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5 # v6.0.0

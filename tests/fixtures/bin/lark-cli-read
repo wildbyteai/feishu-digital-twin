@@ -1,0 +1,84 @@
+#!/usr/bin/env node
+
+import process from "node:process";
+
+const args = process.argv.slice(2);
+const domainIndex = args.indexOf("im");
+if (args[0] !== "--profile" || args[1] !== "example_profile" || domainIndex < 0) {
+  process.stderr.write("missing fixed profile\n");
+  process.exit(2);
+}
+const operation = args[domainIndex + 1];
+
+function success(data) {
+  process.stdout.write(`${JSON.stringify({ ok: true, identity: "user", data })}\n`);
+  process.exit(0);
+}
+
+if (operation === "+chat-list") {
+  success({
+    chats: [
+      { chat_id: "oc_simulated_group", chat_mode: "group", external: false },
+      { chat_id: "oc_simulated_p2p", chat_mode: "p2p", external: false }
+    ],
+    has_more: false,
+    page_token: ""
+  });
+}
+
+if (operation === "chats" && args[domainIndex + 2] === "get") {
+  const chatId = args[args.indexOf("--chat-id") + 1];
+  success({
+    chat_id: chatId,
+    chat_mode: "group",
+    external: false,
+    tenant_key: "tenant_simulated"
+  });
+}
+
+if (operation === "+chat-messages-list") {
+  const chatId = args[args.indexOf("--chat-id") + 1];
+  success({
+    messages: [{
+      message_id: "om_simulated_incremental",
+      chat_id: chatId,
+      msg_type: "text",
+      create_time: "1784078400000",
+      update_time: "1784078400000",
+      sender: { id: "ou_simulated_sender" },
+      content: "模拟负责人：这个方案能否继续？"
+    }],
+    has_more: false,
+    page_token: ""
+  });
+}
+
+if (operation === "+threads-messages-list") {
+  success({
+    messages: [{
+      message_id: "om_simulated_thread_reply",
+      chat_id: "oc_simulated_group",
+      thread_id: "omt_simulated_thread",
+      content: "模拟话题回复",
+      sender: { id: "ou_simulated_thread_sender" }
+    }],
+    has_more: false,
+    page_token: ""
+  });
+}
+
+if (operation === "+messages-mget") {
+  const ids = args[args.indexOf("--message-ids") + 1].split(",");
+  success({
+    messages: ids.map((messageId) => ({
+      message_id: messageId,
+      chat_id: "oc_simulated_group",
+      thread_id: "omt_simulated_thread",
+      content: "🤖【代表发言】这是改名前的历史数字分身消息。",
+      sender: { id: "ou_simulated_principal" }
+    }))
+  });
+}
+
+process.stderr.write(`unsupported read command: ${operation}\n`);
+process.exit(4);

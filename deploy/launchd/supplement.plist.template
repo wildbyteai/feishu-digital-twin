@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>__SERVICE_LABEL__</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE_BIN__</string>
+    <string>__INSTALL_ROOT__/launcher.mjs</string>
+    <string>service</string>
+    <string>run</string>
+    <string>supplement</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__INSTALL_ROOT__</string>
+  <key>StartInterval</key>
+  <integer>30</integer>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>__HOME__</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>LARKSUITE_CLI_NO_UPDATE_NOTIFIER</key>
+    <string>1</string>
+    <key>LARKSUITE_CLI_NO_SKILLS_NOTIFIER</key>
+    <string>1</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/dev/null</string>
+  <key>StandardErrorPath</key>
+  <string>/dev/null</string>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>Umask</key>
+  <integer>63</integer>
+</dict>
+</plist>

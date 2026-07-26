@@ -1,0 +1,34 @@
+{
+  "name": "feishu-digital-twin",
+  "version": "0.1.4",
+  "description": "Self-hosted Feishu digital twin powered by Codex and the official lark-cli.",
+  "author": {
+    "name": "Feishu Digital Twin Contributors"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "feishu",
+    "lark",
+    "digital-twin",
+    "automation"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "飞书数字分身",
+    "shortDescription": "用 Codex 与官方 lark-cli 运行自托管飞书数字分身",
+    "longDescription": "提供数字分身决策、每日工作记忆以及本机安装、诊断、冻结、恢复、升级、回退和卸载流程。",
+    "developerName": "Feishu Digital Twin Contributors",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write",
+      "Automation"
+    ],
+    "defaultPrompt": [
+      "检查飞书数字分身是否已经可以运行。",
+      "查看飞书数字分身当前状态。",
+      "帮我安全地安装或升级飞书数字分身后台服务。"
+    ],
+    "brandColor": "#3370FF"
+  }
+}

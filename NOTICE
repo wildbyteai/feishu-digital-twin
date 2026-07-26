@@ -1,0 +1,10 @@
+Feishu Digital Twin
+Copyright 2026 Feishu Digital Twin contributors
+
+This product is not affiliated with, endorsed by, or sponsored by Feishu,
+Lark, ByteDance, OpenAI, or their affiliates. Product and company names may
+be trademarks of their respective owners.
+
+The distribution does not bundle user credentials, tenant data, the Lark CLI,
+the Codex CLI, or third-party model services. Those are separately installed
+or configured by each deployer and remain subject to their own terms.

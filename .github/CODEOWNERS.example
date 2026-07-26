@@ -1,0 +1,9 @@
+# Copy this file to .github/CODEOWNERS only after replacing the neutral team.
+* @PUBLIC_REPOSITORY_MAINTAINERS
+
+# Privacy, release and trusted-boundary changes always require maintainer review.
+/release/ @PUBLIC_REPOSITORY_MAINTAINERS
+/ops/public-content-scan.mjs @PUBLIC_REPOSITORY_MAINTAINERS
+/ops/public-snapshot.mjs @PUBLIC_REPOSITORY_MAINTAINERS
+/executor/src/lark-guard.mjs @PUBLIC_REPOSITORY_MAINTAINERS
+/.github/ @PUBLIC_REPOSITORY_MAINTAINERS

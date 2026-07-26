@@ -1,0 +1,4 @@
+blank_issues_enabled: false
+# Enable GitHub private vulnerability reporting before the repository is public.
+# SECURITY.md remains the authoritative reporting policy.
+contact_links: []

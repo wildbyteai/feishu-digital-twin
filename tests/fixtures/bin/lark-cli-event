@@ -1,0 +1,253 @@
+#!/usr/bin/env node
+
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import process from "node:process";
+
+const args = process.argv.slice(2);
+const profileIndex = args.indexOf("--profile");
+if (profileIndex < 0 || args[profileIndex + 1] !== "example_profile") {
+  process.stderr.write("missing fixed profile\n");
+  process.exit(2);
+}
+
+function success(data, identity = "user") {
+  process.stdout.write(`${JSON.stringify({ ok: true, identity, data })}\n`);
+  process.exit(0);
+}
+
+if (args[profileIndex + 2] === "whoami") {
+  process.stdout.write(`${JSON.stringify({
+    profile: "example_profile",
+    appId: "cli_twin_fixture",
+    identity: "bot",
+    available: true,
+    tokenStatus: "ready"
+  })}\n`);
+  process.exit(0);
+}
+
+async function readScenario() {
+  try {
+    return (await readFile(path.join(process.env.TMPDIR, "lark-event-scenario"), "utf8")).trim();
+  } catch {
+    return "idle";
+  }
+}
+
+const domainIndex = args.indexOf("im");
+if (domainIndex >= 0 && args[domainIndex + 1] === "+chat-list") {
+  const scenario = await readScenario();
+  if (scenario.startsWith("event-")) {
+    process.stderr.write("realtime must not enumerate user-visible chats\n");
+    process.exit(9);
+  }
+  const eventChat = scenario === "event-external"
+    ? {
+        chat_id: "oc_event_fixture",
+        chat_mode: "group",
+        external: true,
+        tenant_key: "tenant_external_fixture"
+      }
+    : scenario === "event-unknown"
+      ? {
+          chat_id: "oc_event_fixture",
+          chat_mode: "group"
+        }
+      : {
+      chat_id: "oc_event_fixture",
+      chat_mode: "group",
+      external: false,
+      tenant_key: "tenant_fixture"
+    };
+  success({
+    chats: [eventChat, ...(scenario === "supplement-mixed-chats" ? [{
+      chat_id: "oc_external_fixture",
+      chat_mode: "group",
+      external: true,
+      tenant_key: "tenant_external_fixture"
+    }, {
+      chat_id: "oc_unknown_fixture",
+      chat_mode: "group"
+    }] : [])],
+    has_more: false,
+    page_token: ""
+  });
+}
+
+if (domainIndex >= 0 && args[domainIndex + 1] === "chats" && args[domainIndex + 2] === "get") {
+  const scenario = await readScenario();
+  const identity = args[args.indexOf("--as") + 1];
+  if (identity !== "bot") {
+    process.stderr.write("realtime chat metadata must use bot identity\n");
+    process.exit(10);
+  }
+  if (scenario === "event-metadata-failure") {
+    process.stderr.write(`${JSON.stringify({ error: { code: "metadata_unavailable" } })}\n`);
+    process.exit(11);
+  }
+  success({
+    chat_id: "oc_event_fixture",
+    chat_mode: "group",
+    ...(scenario === "event-external" ? {
+      external: true,
+      tenant_key: "tenant_external_fixture"
+    } : scenario === "event-unknown" ? {} : {
+      external: false,
+      tenant_key: "tenant_fixture"
+    })
+  }, "bot");
+}
+
+if (domainIndex >= 0 && args[domainIndex + 1] === "+chat-messages-list") {
+  const scenario = await readScenario();
+  if (scenario === "supplement-authority-loop") {
+    const chatId = args[args.indexOf("--chat-id") + 1];
+    success({
+      messages: [{
+        message_id: "om_twin_outbound",
+        chat_id: chatId,
+        msg_type: "text",
+        create_time: "1784167200000",
+        update_time: "1784167200000",
+        sender: {
+          id: "cli_twin_fixture",
+          id_type: "app_id",
+          sender_type: "app"
+        },
+        content: "🤖【数字分身】这是数字分身刚发出的消息。"
+      }, {
+        message_id: "om_human_labeled",
+        chat_id: chatId,
+        msg_type: "text",
+        create_time: "1784167200001",
+        update_time: "1784167200001",
+        sender: { id: "ou_sender", sender_type: "user" },
+        content: "🤖【数字分身】这是协作者引用的文字。"
+      }, {
+        message_id: "om_other_app_plain",
+        chat_id: chatId,
+        msg_type: "text",
+        create_time: "1784167200002",
+        update_time: "1784167200002",
+        sender: {
+          id: "cli_other_fixture",
+          id_type: "app_id",
+          sender_type: "app"
+        },
+        content: "另一个应用发来的普通业务消息。"
+      }, {
+        message_id: "om_other_app_labeled",
+        chat_id: chatId,
+        msg_type: "text",
+        create_time: "1784167200003",
+        update_time: "1784167200003",
+        sender: {
+          id: "cli_other_fixture",
+          id_type: "app_id",
+          sender_type: "app"
+        },
+        content: "🤖【数字分身】另一个应用发来的带标签业务消息。"
+      }, {
+        message_id: "om_twin_plain",
+        chat_id: chatId,
+        msg_type: "text",
+        create_time: "1784167200004",
+        update_time: "1784167200004",
+        sender: {
+          id: "cli_twin_fixture",
+          id_type: "app_id",
+          sender_type: "app"
+        },
+        content: "当前应用发来的未标记消息。"
+      }],
+      has_more: false,
+      page_token: ""
+    });
+  }
+  if (scenario === "supplement-invalid-messages" || scenario === "supplement-mixed-chats") {
+    const chatId = args[args.indexOf("--chat-id") + 1];
+    success({
+      messages: [{
+        message_id: `om_system_${chatId}`,
+        chat_id: chatId,
+        msg_type: "system",
+        create_time: "1784167200000",
+        update_time: "1784167200000",
+        sender: {},
+        content: ""
+      }, {
+        chat_id: chatId,
+        msg_type: "text",
+        create_time: "1784167200001",
+        update_time: "1784167200001",
+        sender: { id: "ou_sender" },
+        content: "缺少消息 ID"
+      }, {
+        message_id: `om_without_time_${chatId}`,
+        chat_id: chatId,
+        msg_type: "text",
+        sender: { id: "ou_sender" },
+        content: "缺少时间"
+      }, {
+        message_id: chatId === "oc_event_fixture" ? "om_business" : "om_external_business",
+        chat_id: chatId,
+        msg_type: "text",
+        create_time: "1784167200002",
+        update_time: "1784167200002",
+        sender: { id: "ou_sender" },
+        content: "正常业务消息"
+      }],
+      has_more: false,
+      page_token: ""
+    });
+  }
+}
+
+const eventIndex = args.indexOf("event");
+if (eventIndex < 0 || args[eventIndex + 1] !== "consume") {
+  process.stderr.write("unsupported fixture command\n");
+  process.exit(4);
+}
+
+const scenario = await readScenario();
+
+process.once("SIGTERM", () => {
+  process.stderr.write("[fixture] sigterm\n");
+  const delay = scenario === "slow-stop" ? 150 : 0;
+  setTimeout(() => {
+    process.stderr.write("[fixture] stopped\n");
+    process.exit(0);
+  }, delay);
+});
+
+process.stderr.write("[event] ready event_key=im.message.receive_v1\n");
+
+if (scenario === "sensitive-stderr") {
+  process.stderr.write("message=内部业务正文 private_url=https://example.invalid/private token=secret\n");
+}
+
+if (scenario === "invalid-event") {
+  process.stdout.write("not-json\n");
+}
+
+if (new Set([
+  "event-internal",
+  "event-external",
+  "event-unknown",
+  "event-metadata-failure"
+]).has(scenario)) {
+  process.stdout.write(`${JSON.stringify({
+    type: "im.message.receive_v1",
+    event_id: `evt_${scenario}`,
+    chat_id: "oc_event_fixture",
+    chat_type: "group",
+    message_id: `om_${scenario}`,
+    sender_id: "ou_sender",
+    create_time: "1784167200000",
+    message_type: "text",
+    content: "需要数字分身处理的实时消息"
+  })}\n`);
+}
+
+setInterval(() => {}, 60_000);

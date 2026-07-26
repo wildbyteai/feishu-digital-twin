@@ -1,0 +1,67 @@
+#!/usr/bin/env node
+
+import { readFile } from "node:fs/promises";
+import process from "node:process";
+
+const args = process.argv.slice(2);
+for (const name of ["OPENAI_API_KEY", "LARK_APP_SECRET", "GITHUB_TOKEN", "GENERIC_API_TOKEN"]) {
+  if (process.env[name] !== undefined) {
+    process.stderr.write(`forbidden environment variable: ${name}\n`);
+    process.exit(4);
+  }
+}
+for (const required of [
+  "--ask-for-approval",
+  "never",
+  "exec",
+  "--ephemeral",
+  "--sandbox",
+  "read-only",
+  "--strict-config",
+  "--ignore-rules",
+  "--output-schema",
+  "--json"
+]) {
+  if (!args.includes(required)) {
+    process.stderr.write(`missing argument: ${required}\n`);
+    process.exit(2);
+  }
+}
+if (args.includes("--ignore-user-config")) {
+  process.stderr.write("isolated provider config must not be ignored\n");
+  process.exit(2);
+}
+const schema = JSON.parse(await readFile(args[args.indexOf("--output-schema") + 1], "utf8"));
+function hasUnsupportedUniqueItems(value) {
+  if (Array.isArray(value)) return value.some(hasUnsupportedUniqueItems);
+  if (!value || typeof value !== "object") return false;
+  return Object.hasOwn(value, "uniqueItems") || Object.values(value).some(hasUnsupportedUniqueItems);
+}
+if (hasUnsupportedUniqueItems(schema)) {
+  process.stderr.write("response format schema contains unsupported uniqueItems\n");
+  process.exit(5);
+}
+
+let prompt = "";
+process.stdin.setEncoding("utf8");
+for await (const chunk of process.stdin) prompt += chunk;
+const eventId = [...prompt.matchAll(/"event_id"\s*:\s*"([^"]+)"/gu)].at(-1)?.[1];
+const messageId = [...prompt.matchAll(/"message_id"\s*:\s*"([^"]+)"/gu)].at(-1)?.[1];
+if (!prompt.includes("feishu-digital-twin") || !eventId || !messageId) {
+  process.stderr.write("prompt is missing the project Skill or event\n");
+  process.exit(3);
+}
+
+const doctor = eventId === "evt_provider_doctor";
+const decision = {
+  event_id: eventId,
+  outcome: doctor ? "ignore" : "reply",
+  reason: doctor ? "capability check complete" : "需要回应",
+  response: doctor ? null : { mode: "representative", text: "可以继续推进。" },
+  commands: [],
+  source_refs: [messageId]
+};
+process.stdout.write(`${JSON.stringify({
+  type: "item.completed",
+  item: { type: "agent_message", text: JSON.stringify(decision) }
+})}\n`);

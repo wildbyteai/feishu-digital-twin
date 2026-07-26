@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "authorization_complete": false,
+  "git_isolation_required": true,
+  "launchd_domain": "gui/current",
+  "state_database": ".runtime/state.sqlite",
+  "policy": {
+    "supplement_max_age_seconds": 600,
+    "daily_memory_max_age_seconds": 129600
+  },
+  "private_roots": [
+    {
+      "role": "runtime",
+      "path": ".runtime"
+    },
+    {
+      "role": "codex",
+      "path": ".codex-runtime"
+    }
+  ],
+  "services": [
+    {
+      "role": "realtime",
+      "label": "com.example.feishu-digital-twin.event",
+      "signal_log": ".runtime/event.stderr.log",
+      "result_log": ".runtime/event.stdout.log"
+    },
+    {
+      "role": "supplement",
+      "label": "com.example.feishu-digital-twin.supplement",
+      "signal_log": ".runtime/supplement.stderr.log",
+      "result_log": ".runtime/supplement.stdout.log"
+    },
+    {
+      "role": "daily_memory",
+      "label": "com.example.feishu-digital-twin.daily-memory",
+      "signal_log": ".runtime/daily-memory.stderr.log",
+      "result_log": ".runtime/daily-memory.stdout.log"
+    }
+  ]
+}

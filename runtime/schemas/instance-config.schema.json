@@ -1,0 +1,373 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/feishu-digital-twin/instance-config.schema.json",
+  "title": "Feishu digital twin instance configuration",
+  "description": "Private instance configuration. Codex authentication and model selection remain entirely managed by the configured Codex runtime environment.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "profile",
+    "production_data_approved",
+    "principal",
+    "message_scope",
+    "schedule",
+    "allowed_lark_domains"
+  ],
+  "properties": {
+    "schema_version": {
+      "enum": [1, 2]
+    },
+    "instance_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+    },
+    "profile": {
+      "type": "string",
+      "minLength": 1
+    },
+    "lark_cli_bin": {
+      "type": "string",
+      "minLength": 1
+    },
+    "message_scope": {
+      "description": "Explicit message discovery scope. Public instances must select one value; no permissive fallback is applied.",
+      "enum": [
+        "bot_only",
+        "internal_visible",
+        "all_visible"
+      ]
+    },
+    "codex_bin": {
+      "type": "string",
+      "minLength": 1
+    },
+    "codex_environment_root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "codex_timeout_ms": {
+      "type": "integer",
+      "minimum": 1000,
+      "maximum": 600000
+    },
+    "max_ai_action_rounds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3
+    },
+    "production_data_approved": {
+      "type": "boolean"
+    },
+    "production_enabled": {
+      "description": "Deprecated schema v1 local runtime switch. Schema v2 uses control instead.",
+      "deprecated": true,
+      "type": "boolean"
+    },
+    "control": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": {
+          "enum": ["local", "base"]
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["mode"],
+            "properties": {
+              "mode": { "const": "local" }
+            }
+          },
+          "then": {
+            "required": ["enabled"]
+          },
+          "else": {
+            "not": { "required": ["enabled"] }
+          }
+        }
+      ]
+    },
+    "supplement_lookback_minutes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1440
+    },
+    "console": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["base_token", "runtime_table", "group_rules_table"],
+      "properties": {
+        "base_token": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtime_table": {
+          "type": "string",
+          "minLength": 1
+        },
+        "group_rules_table": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "principal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "open_id", "timezone"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "open_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timezone": {
+          "type": "string",
+          "minLength": 1
+        },
+        "address_names": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "schedule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workday_start_hour",
+        "workday_end_hour",
+        "work_interval_seconds",
+        "quiet_interval_seconds",
+        "daily_memory_hour",
+        "daily_memory_minute"
+      ],
+      "properties": {
+        "workdays": {
+          "description": "ISO weekdays where Monday is 1 and Sunday is 7. When omitted, Monday through Friday are used.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 7
+          }
+        },
+        "workday_start_hour": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 23
+        },
+        "workday_end_hour": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 24
+        },
+        "work_interval_seconds": {
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 86400
+        },
+        "quiet_interval_seconds": {
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 86400
+        },
+        "daily_memory_hour": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 23
+        },
+        "daily_memory_minute": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 59
+        }
+      }
+    },
+    "daily_memory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["folder_token", "folder_name"],
+      "properties": {
+        "folder_token": {
+          "type": "string",
+          "minLength": 1
+        },
+        "folder_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "excluded_chat_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "excluded_topics": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "privacy": {
+      "description": "Optional privacy retention overrides. Every value may only shorten the built-in hard maximum.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "state_retention_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30
+        },
+        "result_log_retention_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 7
+        },
+        "result_log_max_bytes": {
+          "type": "integer",
+          "minimum": 65536,
+          "maximum": 10485760
+        },
+        "signal_log_retention_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 7
+        },
+        "signal_log_max_bytes": {
+          "type": "integer",
+          "minimum": 65536,
+          "maximum": 1048576
+        }
+      }
+    },
+    "allowed_lark_domains": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "approval",
+          "apps",
+          "attendance",
+          "base",
+          "calendar",
+          "contact",
+          "docs",
+          "drive",
+          "im",
+          "mail",
+          "markdown",
+          "mindnotes",
+          "minutes",
+          "note",
+          "okr",
+          "sheets",
+          "slides",
+          "task",
+          "vc",
+          "whiteboard",
+          "wiki"
+        ]
+      }
+    },
+    "group_rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["chat_id", "rules"],
+        "properties": {
+          "chat_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "authority_rules": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["schema_version"],
+        "properties": {
+          "schema_version": { "const": 1 }
+        }
+      },
+      "then": {
+        "not": { "required": ["control"] }
+      },
+      "else": {
+        "required": ["control"],
+        "not": { "required": ["production_enabled"] },
+        "allOf": [
+          {
+            "if": {
+              "required": ["control"],
+              "properties": {
+                "control": {
+                  "required": ["mode"],
+                  "properties": {
+                    "mode": { "const": "base" }
+                  }
+                }
+              }
+            },
+            "then": {
+              "required": ["console"],
+              "properties": {
+                "allowed_lark_domains": {
+                  "contains": { "const": "base" }
+                }
+              },
+              "not": {
+                "anyOf": [
+                  { "required": ["authority_rules"] },
+                  { "required": ["group_rules"] }
+                ]
+              }
+            },
+            "else": {
+              "not": { "required": ["console"] }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

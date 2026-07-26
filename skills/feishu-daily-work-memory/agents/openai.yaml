@@ -1,0 +1,4 @@
+interface:
+  display_name: "飞书每日工作记忆"
+  short_description: "自动汇总飞书沟通、任务与日程，生成可供数字分身续用的每日工作记忆"
+  default_prompt: "使用 $feishu-daily-work-memory 汇总指定日期的飞书沟通、任务和日程并生成每日工作记忆。"

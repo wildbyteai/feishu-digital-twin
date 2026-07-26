@@ -1,0 +1,49 @@
+# 企业知识库辅助回复
+
+知识库能力由 AI 根据聊天方向选择资料，但所有检索和正文读取继续使用官方 lark-cli 与对应 lark-* Skill。项目不建立本地向量库、知识副本或长期搜索索引。
+
+## 配置方式
+
+先通过主体 user 身份列出可访问知识空间：
+
+```bash
+lark-cli --profile <profile> wiki +space-list --as user --page-all --format json
+```
+
+部署者明确选择空间后，只保存稳定的空间名称、`space_id` 和适用方向。可写入 Base 控制台的“个性化规则”，例如使用不含真实标识的结构：
+
+```text
+企业知识库：<知识空间名称>；space_id=<知识空间ID>；适用于<业务方向>
+```
+
+setup 始终生成上述统一格式。对于已有 Base 或高级配置中的自然语言规则，Doctor 也接受“企业知识库”“知识空间”“空间名称”标签、常见中英文分隔符和引号，`space_id` 可位于规则任意位置；只有名称与 `space_id` 都能明确解析时才会进行官方只读验真，避免把普通文本或 `workspace_id` 误当成资源引用。
+
+不使用控制 Base 时，普通 setup 可直接生成这条 AI 自然语言规则：
+
+```bash
+feishu-digital-twin setup \
+  --capabilities message,enterprise_knowledge \
+  --knowledge-space-name <知识空间名称> \
+  --knowledge-space-id <space-id> \
+  --knowledge-direction <业务方向> \
+  <其他必需的 setup 选项>
+```
+
+三个知识空间选项必须同时提供。setup 自动补齐企业知识能力所需业务域，并通过官方 `wiki +space-list` 只读核对名称与 `space_id`；它不读取正文，也不创建或修改知识空间。使用控制 Base 时，不能再传入 `--knowledge-space-*`；知识路由和其他自然语言规则必须在 Base“个性化规则”这一个来源中完整维护。
+
+## 回复流程
+
+1. AI 判断聊天大致属于哪个业务方向。
+2. 最多选择两个最相关且当前实例允许使用的空间。
+3. 使用 `drive +search --space-ids ...` 搜索候选。
+4. 搜索摘要只用于筛选，不能直接当事实。
+5. 对最多三个候选使用 `drive +inspect` 判断真实类型，再由 docs、Base、Sheets、Markdown 等对应能力读取正文或结构化数据。
+6. 只使用实际读取到、且当前接收者有权访问的内容形成回复。
+
+跨群信息只能引用对接收者可见的已发布 Doc、Wiki 或 Base 内容。无法确认权限、正文读取失败或来源互相冲突时，应说明依据不足并请求确认，而不是猜测。
+
+## 失效与关闭
+
+空间删除、重建、ID 变化或权限撤销时，停止使用该路由并更新规则；不要自动搜索相似名称后替换目标。关闭知识辅助只需删除相应路由或从本机上限移除相关 domain，不删除知识空间和文档。
+
+不要在公开 Issue/PR 粘贴配置、凭据、二维码、日志或业务正文。

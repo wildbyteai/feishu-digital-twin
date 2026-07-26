@@ -1,0 +1,4 @@
+interface:
+  display_name: "飞书数字分身"
+  short_description: "使用官方 lark-cli 让 Codex 代表主体用户处理飞书工作"
+  default_prompt: "Use $feishu-digital-twin to decide and execute the next Feishu action for this message."

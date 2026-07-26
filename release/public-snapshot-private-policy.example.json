@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "forbidden_literals": [
+    "Replace With A Private Identity"
+  ],
+  "private_domains": [
+    "private.example.invalid"
+  ]
+}

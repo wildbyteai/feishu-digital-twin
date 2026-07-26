@@ -1,0 +1,39 @@
+version = 1
+SPDX-PackageName = "Feishu Digital Twin"
+SPDX-PackageSupplier = "Feishu Digital Twin contributors"
+SPDX-PackageDownloadLocation = "NOASSERTION"
+
+[[annotations]]
+path = [
+  ".codex-plugin/**",
+  ".github/**",
+  ".gitignore",
+  "CODE_OF_CONDUCT.md",
+  "CONTRIBUTING.md",
+  "GOVERNANCE.md",
+  "LICENSE",
+  "LICENSES/**",
+  "NOTICE",
+  "README.md",
+  "REUSE.toml",
+  "SECURITY.md",
+  "bin/**",
+  "config.example.json",
+  "config.full.example.json",
+  "continuity.example.json",
+  "deploy/**",
+  "docs/**",
+  "executor/**",
+  "intake/**",
+  "ops/**",
+  "package.json",
+  "product/**",
+  "release/**",
+  "runtime/**",
+  "shared/**",
+  "skills/**",
+  "tests/**"
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Feishu Digital Twin contributors"
+SPDX-License-Identifier = "Apache-2.0"

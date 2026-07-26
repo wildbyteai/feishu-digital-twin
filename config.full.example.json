@@ -1,0 +1,58 @@
+{
+  "schema_version": 2,
+  "instance_id": "example-instance",
+  "profile": "example_profile",
+  "message_scope": "bot_only",
+  "lark_cli_bin": "lark-cli",
+  "codex_bin": "/opt/feishu-digital-twin/bin/codex",
+  "codex_environment_root": "/opt/feishu-digital-twin/codex-environment",
+  "codex_timeout_ms": 120000,
+  "max_ai_action_rounds": 3,
+  "production_data_approved": false,
+  "control": {
+    "mode": "base"
+  },
+  "supplement_lookback_minutes": 5,
+  "console": {
+    "base_token": "replace_me",
+    "runtime_table": "replace_me",
+    "group_rules_table": "replace_me"
+  },
+  "principal": {
+    "name": "示例负责人",
+    "open_id": "ou_fixture_principal",
+    "timezone": "Asia/Shanghai",
+    "address_names": ["示例负责人"]
+  },
+  "schedule": {
+    "workdays": [1, 2, 3, 4, 5],
+    "workday_start_hour": 9,
+    "workday_end_hour": 18,
+    "work_interval_seconds": 30,
+    "quiet_interval_seconds": 300,
+    "daily_memory_hour": 0,
+    "daily_memory_minute": 10
+  },
+  "daily_memory": {
+    "folder_token": "replace_me",
+    "folder_name": "数字分身每日工作记忆",
+    "excluded_chat_ids": [],
+    "excluded_topics": []
+  },
+  "privacy": {
+    "state_retention_days": 7,
+    "result_log_retention_days": 3,
+    "result_log_max_bytes": 1048576,
+    "signal_log_retention_days": 3,
+    "signal_log_max_bytes": 262144
+  },
+  "allowed_lark_domains": [
+    "im",
+    "task",
+    "calendar",
+    "docs",
+    "base",
+    "drive",
+    "wiki"
+  ]
+}
