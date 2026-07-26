@@ -81,7 +81,7 @@
 | `excluded_chat_ids` | 排除不进入每日记忆的聊天 | 唯一字符串数组 | 不公开或写日志；失效项可删除 |
 | `excluded_topics` | 排除敏感话题或线程 | 可填写稳定 `thread_id`，或明确的 topic/title 文本；唯一字符串数组 | 在消息正文进入 Codex 前确定性过滤；缺少可比较元数据时删除该条并记录 `privacy_metadata_unavailable` |
 
-## 普通 setup 的已有资源选项
+## 普通 setup 的资源选项
 
 | 配置结构 | setup 选项组 | 行为 |
 | --- | --- | --- |
@@ -90,7 +90,11 @@
 | local `authority_rules` | `--knowledge-space-name`、`--knowledge-space-id`、`--knowledge-direction` | 三项必须齐全；生成“企业知识库…”自然语言规则，不建设代码化路由表 |
 | `daily_memory` | `--daily-memory-folder-token`、`--daily-memory-folder-name` | 两项必须齐全；排除列表默认为空 |
 
-任一资源组缺项都在初始化或改动实例前失败关闭。setup 自动合并这些资源所需的官方业务域，并在 Doctor 中只读验真：Base 读取两张表，知识空间使用 `wiki +space-list` 匹配名称和 `space_id`，每日记忆目录使用 `drive files list` 对指定 `folder_token` 发起一页大小为 1 的真实可访问性查询。它不读取正文，也不创建、修改或写入这些资源。上述选项不能与 `--config` 混用。选择控制 Base 后，知识路由必须在 Base“个性化规则”中维护，不能同时传入 `--knowledge-space-*`。返回的 setup/status 摘要不回显 token、space ID、表名、目录名或主体别名。
+任一已有资源组缺项都在初始化或改动实例前失败关闭。setup 自动合并这些资源所需的官方业务域，并在 Doctor 中只读验真：Base 读取两张表，知识空间使用 `wiki +space-list` 匹配名称和 `space_id`，每日记忆目录使用 `drive files list` 对指定 `folder_token` 发起一页大小为 1 的真实可访问性查询。已有资源路径不读取正文，也不修改资源。
+
+若 `--capabilities` 选择 `enterprise_knowledge` 或 `daily_memory` 但没有对应稳定引用，setup 返回缺失资源、上述已有资源参数组和 `--create-missing-resources`。部署者添加该开关后，setup 使用主体 user 身份和确定性默认名称，依次执行官方列表、`--dry-run`、`wiki +space-create` / `drive +create-folder`、再次列表验证，再把稳定 ID/token 写入本配置。唯一同名资源会复用，多个同名资源失败关闭。创建成功后若本机 setup 失败，外部资源保留并在重试时复用；不会因本机回滚自动删除。
+
+所有引导资源选项和 `--create-missing-resources` 都不能与 `--config` 混用。自动创建不包含 Base、控制表、Base 规则、分享范围或权限管理。选择控制 Base 后，知识路由必须在 Base“个性化规则”中维护，不能同时传入 `--knowledge-space-*`。返回的 setup/status 摘要只报告资源类型的 `created` / `reused` 状态，不回显 token、space ID、表名、目录名或主体别名。
 
 ## `privacy` 子字段
 

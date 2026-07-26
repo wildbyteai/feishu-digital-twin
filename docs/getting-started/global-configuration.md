@@ -63,7 +63,7 @@ feishu-digital-twin setup \
 
 ## 控制 Base、知识空间和每日记忆
 
-普通 `setup` 可以用非交互、可脚本化的选项引用已有资源。它把稳定引用写入 Git 外 `0600` 私有配置，自动合并对应的最小官方业务域，并用官方 CLI 只读验真；不创建或修改 Base、表、知识空间或文件夹，也不在输出中回显真实值。
+普通 `setup` 可以用非交互、可脚本化的选项引用已有资源。它把稳定引用写入 Git 外 `0600` 私有配置，自动合并对应的最小官方业务域，并用官方 CLI 只读验真，不在输出中回显真实值。Base 和控制表只支持已有资源；知识空间与每日记忆目录既可以引用已有资源，也可以经明确开关自动创建。
 
 使用飞书 Base 作为唯一控制和规则来源时：
 
@@ -98,7 +98,34 @@ feishu-digital-twin setup \
 
 控制 Base 的三个选项、知识空间的三个选项、每日记忆的两个选项都必须各自成组提供；任何缺项或官方只读验真失败都在修改实例前失败关闭。Base 会读取两张表，知识空间会核对名称和 `space_id`，每日记忆目标会核对为同一 folder token。这些引导选项不能与 `--config` 混用。高级部署者仍可单独使用 `setup --config <private-config>`；候选文件必须位于源码树之外并符合[配置参考](../reference/configuration.md)。
 
-如需创建新 Base 或文件夹，这仍属于独立的飞书写操作：先用官方 CLI `--dry-run` 预览，再由部署者明确批准。详见[飞书 Base 控制台](../feishu-console.md)、[企业知识库](../features/enterprise-knowledge.md)和[每日工作记忆](../features/daily-memory.md)。
+如果 `--capabilities` 选择了 `enterprise_knowledge` 或 `daily_memory`，但当前配置没有对应资源，setup 会在本机和飞书写入前返回：
+
+- `missing_resources`：缺少 `enterprise_knowledge`、`daily_memory` 中的哪些资源；
+- `existing_resource_options`：选择已有资源时需要提供的参数组；
+- `automatic_creation_option=--create-missing-resources`：允许自动创建的显式开关。
+
+没有现成资源时可直接运行：
+
+```bash
+feishu-digital-twin setup \
+  --profile <profile> \
+  --codex-environment-root <private-codex-environment> \
+  --capabilities message,enterprise_knowledge,daily_memory \
+  --create-missing-resources \
+  --approve-production-data
+```
+
+自动创建只编排官方组件：
+
+1. 用主体 user 身份按精确默认名称只读查找；
+2. 未找到时执行官方 `--dry-run`；
+3. 调用 `wiki +space-create` 或 `drive +create-folder`；
+4. 再次只读查找并核对稳定 ID/token；
+5. 写入 Git 外 `0600` 私有配置，继续原有 Doctor、服务安装和健康读回。
+
+默认名称是 `<主体用户显示名>的数字分身知识库` 和 `<主体用户显示名>的每日工作记忆`，知识路由默认适用于全部业务方向。重复 setup 会复用唯一精确同名资源；多个同名资源时失败关闭，要求使用已有资源参数提供明确 ID/token。官方 CLI 若返回 exit 10，setup 不会静默追加 `--yes`。创建成功后若 Codex Doctor、后台服务或其他本机步骤失败，本机状态照常恢复，但已创建的飞书资源保留，错误会返回 `created_resources_retained` 和 `retry_safe=true`；修复后重跑即可复用。
+
+`--create-missing-resources` 不能与 `--config` 混用，也不会创建 Base、控制表、修改 Base 规则或管理权限。使用 Base 控制模式时，知识空间路由仍由部署者在 Base 个性化规则中维护。详见[飞书 Base 控制台](../feishu-console.md)、[企业知识库](../features/enterprise-knowledge.md)、[每日工作记忆](../features/daily-memory.md)和[飞书最小权限参考](../reference/feishu-permissions.md)。
 
 公开示例只能用于了解结构，不能原样作为生产配置。
 
@@ -106,7 +133,7 @@ feishu-digital-twin setup \
 
 成功后置条件同时满足：返回 `status=setup-complete`，三个后台角色均健康，实例已经解除冻结，私有配置和状态文件权限正确。运行开关已开启时 `readiness=ready`；Base 或本机开关明确关闭时允许 `readiness=safe-but-disabled`。`readiness=degraded` 必须失败并恢复调用前状态。
 
-重复执行相同命令应收敛到同一状态。任何一步失败都会恢复调用前的配置、冻结状态和服务集合；新安装失败时，不留下半初始化的生产实例。
+重复执行相同命令应收敛到同一状态。任何一步失败都会恢复调用前的配置、冻结状态和服务集合；新安装失败时，不留下半初始化的生产实例。自动创建的飞书知识空间和日报目录属于外部资源，不随本机回滚自动删除，以免误删；它们会在重试时精确复用。
 
 常用运行入口：
 

@@ -74,6 +74,7 @@
     { "path": "product/src/cli.mjs", "provenance": "project" },
     { "path": "product/src/installation.mjs", "provenance": "project" },
     { "path": "product/src/service-host.mjs", "provenance": "project" },
+    { "path": "README.en.md", "provenance": "project" },
     { "path": "README.md", "provenance": "project" },
     { "path": "release/public-snapshot-private-policy.example.json", "provenance": "project" },
     { "path": "release/public-snapshot.example.json", "provenance": "project" },

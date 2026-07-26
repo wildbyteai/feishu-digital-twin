@@ -1,3 +1,5 @@
+[中文](./README.md) | [English](./README.en.md)
+
 # 飞书数字分身
 
 基于 Codex、飞书官方 `lark-cli` 和 lark-* Skills 的完整开源、自托管飞书数字分身。
@@ -6,7 +8,7 @@
 
 > 本项目不是飞书、Lark 或 OpenAI 官方产品。相关商标归各自权利人所有。
 
-> 当前公开版本为 `v0.1.9`。正式支持 macOS；目前从 GitHub 源码或版本标签安装，尚未发布 npm 和 Codex Marketplace 一键安装包。
+> 当前公开版本为 `v0.1.10`。正式支持 macOS；目前从 GitHub 源码或版本标签安装，尚未发布 npm 和 Codex Marketplace 一键安装包。
 
 ## 五分钟了解
 
@@ -31,12 +33,12 @@
 - 一个能接收消息事件的飞书应用和 Bot；
 - 可在后台非交互执行 `codex exec --ephemeral` 的 Codex CLI 环境；
 - 已确认允许处理目标飞书业务数据的模型服务环境；
-- 如果启用 Base 控制台、企业知识或每日记忆，提前准备对应的飞书资源。
+- 如果启用 Base 控制台，提前准备 Base 和两张控制表；企业知识空间和每日记忆目录可以传入已有资源，也可以由 `setup` 调用官方 CLI 创建。
 
 先从 GitHub 固定版本安装命令行：
 
 ```bash
-git clone --branch v0.1.9 --depth 1 https://github.com/wildbyteai/feishu-digital-twin.git
+git clone --branch v0.1.10 --depth 1 https://github.com/wildbyteai/feishu-digital-twin.git
 cd feishu-digital-twin
 npm install --global .
 feishu-digital-twin --help
@@ -51,14 +53,15 @@ feishu-digital-twin --help
 | 发现并验证指定 `lark-cli` profile 的主体用户和 Bot 身份 | 创建飞书应用、启用 Bot、发布应用版本 |
 | 验证 Codex CLI 能完成一次无业务正文的结构化推理 | 在开发者后台配置应用权限和 `im.message.receive_v1` 事件 |
 | 根据 `--capabilities` 生成本机允许使用的最小飞书业务域 | 完成所需的 Bot scope 与主体用户 OAuth 授权 |
-| 只读验证传入的 Base、表、Wiki 空间和 Drive 文件夹 | 按需按[控制台表结构](./docs/feishu-console.md)创建 Base 和两张控制表，并创建 Wiki 知识空间和日报文件夹 |
-| 在 Git 工作区之外生成仅当前用户可读的私有配置 | 提供这些已有资源的名称、ID 或 token |
+| 只读验证传入的 Base、表、Wiki 空间和 Drive 文件夹 | 按需按[控制台表结构](./docs/feishu-console.md)创建 Base 和两张控制表 |
+| 经 `--create-missing-resources` 明确批准后，使用主体 user 身份调用官方 CLI 创建并读回知识空间和日报目录 | 若不自动创建，提供已有资源的名称、ID 或 token |
+| 在 Git 工作区之外生成仅当前用户可读的私有配置 | 确认自动生成的默认资源名称是否适合当前主体用户 |
 | 安装并启动三个 macOS LaunchAgent 后台角色 | 确认模型服务环境获准处理相应飞书业务数据 |
 | 运行 Doctor、读回状态；失败时回滚到调用前状态 | 选择消息范围和实际启用的能力 |
 
-> **Base、表、知识空间和日报文件夹需要提前创建；`setup` 只引用并只读校验，不会自动写入或创建这些资源。**
+> **Base 和两张控制表仍需提前创建。知识空间与日报目录无需强制提前准备：缺失时 `setup` 会明确列出所需资源；追加 `--create-missing-resources` 后，它会依次执行官方 `--dry-run`、创建和只读验证。知识空间和日报目录分别调用官方 `wiki +space-create` 与 `drive +create-folder`。**
 
-创建这些资源属于独立的飞书写操作。可使用官方 `lark-cli` 先 `--dry-run` 预览，再由部署者执行；不要把真实 token、ID 或企业规则提交到 GitHub。
+自动创建使用主体 user 身份，默认名称为 `<主体用户显示名>的数字分身知识库` 和 `<主体用户显示名>的每日工作记忆`。重试会按精确名称复用；发现多个同名资源时停止并要求传入明确 ID/token。setup 后续本机步骤失败时，已创建的飞书资源不会被删除，下一次运行会复用。真实 token、ID 和企业规则只写入 Git 外 `0600` 私有配置，不回显到普通命令输出。
 
 ## 功能与所需权限
 
@@ -123,9 +126,27 @@ feishu-digital-twin setup \
 
 首次选择非 `bot_only` 或扩大已有范围时，`--approve-message-scope` 必不可少。Base、AI、普通飞书消息和后台任务都不能自行扩大这个范围。
 
-### 场景 C：Base 控制台、企业知识和每日记忆
+### 场景 C：没有现成知识空间和日报目录
 
-先按[飞书 Base 控制台](./docs/feishu-console.md)创建 Base 和两张控制表，再创建日报 Drive 文件夹并把已有资源传给 `setup`。运行配置表必须包含且只包含一条有效运行记录；群级规则表可以没有记录，但两张表都必须具备文档列出的全部字段。“允许域”只能使用严格的“继承”或本机上限内的非空域列表。知识空间路由可以在 Base 规则中维护：
+最简单的完整能力路径是不启用 Base 控制台，直接让 setup 用官方 CLI 创建缺失资源：
+
+```bash
+feishu-digital-twin setup \
+  --profile <lark-cli-profile> \
+  --timezone Asia/Shanghai \
+  --codex-environment-root <private-codex-environment> \
+  --message-scope internal_visible \
+  --capabilities message,task,calendar,docs,enterprise_knowledge,daily_memory \
+  --create-missing-resources \
+  --approve-message-scope \
+  --approve-production-data
+```
+
+如果不加 `--create-missing-resources`，setup 不会静默创建，而是返回 `missing_resources`、已有资源参数和自动创建开关。
+
+### 场景 D：使用 Base 控制台和已有资源
+
+先按[飞书 Base 控制台](./docs/feishu-console.md)创建 Base 和两张控制表。运行配置表必须包含且只包含一条有效运行记录；群级规则表可以没有记录，但两张表都必须具备文档列出的全部字段。“允许域”只能使用严格的“继承”或本机上限内的非空域列表。知识空间路由在 Base 规则中维护；日报目录可以传入已有资源：
 
 ```bash
 feishu-digital-twin setup \
@@ -182,7 +203,7 @@ feishu-digital-twin control uninstall
 - 项目默认无远程遥测，不上传调试包；运行日志不记录消息正文、完整模型输出或凭据，也不建设长期聊天历史；短期待确认最多暂存必要动作寻址 10 分钟，确认、拒绝或过期后清空；
 - `allowed_lark_domains` 是本机不可突破的能力上限；Base 控制台只能继续收紧，不能新增未授权能力；
 - 回复身份、`🤖` 标识、冻结、去重、补读游标和所有权转让禁令由可信运行时保证；
-- 当前安装器只读验证已有飞书资源，不会自动创建或修改 Base、Wiki 和 Drive 目录。
+- 当前安装器不会创建或修改 Base/控制表；只有部署者显式添加 `--create-missing-resources` 时，才通过官方 CLI 创建缺失的 Wiki 空间和 Drive 日报目录。
 
 Codex CLI 内部使用哪种模型服务，由部署者自己的 Codex 配置决定。本项目只调用 `codex exec --ephemeral`，不保存模型端点，也不实现 Provider 选择和切换。部署者必须自行确认该环境获准处理相应飞书数据。
 

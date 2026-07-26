@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 
 const projectRoot = path.resolve(import.meta.dirname, "../..");
+const ROOT_READMES = Object.freeze(["README.md", "README.en.md"]);
 
 const REQUIRED_DOCUMENTS = Object.freeze([
   "docs/compatibility.md",
@@ -48,30 +49,66 @@ test("公开上手、配置、运行和隐私文档随源码、公共快照和 n
   assert.equal(publicFiles.has("tests/runtime/public-documentation-v2.test.mjs"), true);
 });
 
-test("根 README 只用三个主步骤引导真实安装并链接全部详细指引", () => {
-  const content = read("README.md");
-  for (const link of [
-    "./docs/getting-started/feishu-cli.md",
-    "./docs/getting-started/codex.md",
-    "./docs/getting-started/global-configuration.md"
-  ]) assert.match(content, new RegExp(link.replaceAll(".", "\\."), "u"));
-  for (const relativePath of REQUIRED_DOCUMENTS) {
-    assert.match(content, new RegExp(relativePath.replaceAll(".", "\\."), "u"), relativePath);
+test("根 README 保持中英文双语且关键安装边界一致", () => {
+  const packageManifest = JSON.parse(read("package.json"));
+  const publicSnapshot = JSON.parse(read("release/public-snapshot.example.json"));
+  const packaged = new Set(packageManifest.files);
+  const publicFiles = new Set(publicSnapshot.files.map((entry) => entry.path));
+  const chinese = read("README.md");
+  const english = read("README.en.md");
+
+  assert.match(chinese, /\[English\]\(\.\/README\.en\.md\)/u);
+  assert.match(english, /\[中文\]\(\.\/README\.md\)/u);
+  for (const relativePath of ROOT_READMES) {
+    assert.equal(packaged.has(relativePath), true, `${relativePath} missing from package.json`);
+    assert.equal(publicFiles.has(relativePath), true, `${relativePath} missing from public snapshot`);
   }
-  const start = content.indexOf("## 三步开始");
-  const end = content.indexOf("\n## ", start + 4);
-  assert.notEqual(start, -1);
-  const section = content.slice(start, end === -1 ? undefined : end);
-  assert.deepEqual(
-    [...section.matchAll(/^\d+\.\s+\*\*/gmu)].map((match) => match[0].slice(0, 2)),
-    ["1.", "2.", "3."]
-  );
+  for (const content of [chinese, english]) {
+    assert.match(content, /v0\.1\.10/u);
+    assert.match(content, /--create-missing-resources/u);
+    assert.match(content, /im\.message\.receive_v1/u);
+    assert.match(content, /codex exec --ephemeral/u);
+    assert.match(content, /wiki \+space-create/u);
+    assert.match(content, /drive \+create-folder/u);
+  }
+  assert.match(chinese, /Base 和两张控制表仍需提前创建/u);
+  assert.match(english, /Base and its two control tables must still be created in advance/u);
+});
+
+test("根 README 只用三个主步骤引导真实安装并链接全部详细指引", () => {
+  for (const [relativePath, heading] of [
+    ["README.md", "## 三步开始"],
+    ["README.en.md", "## Get started in three steps"]
+  ]) {
+    const content = read(relativePath);
+    for (const link of [
+      "./docs/getting-started/feishu-cli.md",
+      "./docs/getting-started/codex.md",
+      "./docs/getting-started/global-configuration.md"
+    ]) assert.match(content, new RegExp(link.replaceAll(".", "\\."), "u"));
+    for (const requiredDocument of REQUIRED_DOCUMENTS) {
+      assert.match(
+        content,
+        new RegExp(requiredDocument.replaceAll(".", "\\."), "u"),
+        `${relativePath}: ${requiredDocument}`
+      );
+    }
+    const start = content.indexOf(heading);
+    const end = content.indexOf("\n## ", start + 4);
+    assert.notEqual(start, -1, relativePath);
+    const section = content.slice(start, end === -1 ? undefined : end);
+    assert.deepEqual(
+      [...section.matchAll(/^\d+\.\s+\*\*/gmu)].map((match) => match[0].slice(0, 2)),
+      ["1.", "2.", "3."],
+      relativePath
+    );
+  }
 });
 
 test("公开文档中的本地 Markdown 链接均留在发行树内并可读取", () => {
   const packageManifest = JSON.parse(read("package.json"));
   const packaged = new Set(packageManifest.files);
-  for (const sourcePath of ["README.md", ...REQUIRED_DOCUMENTS]) {
+  for (const sourcePath of [...ROOT_READMES, ...REQUIRED_DOCUMENTS]) {
     const sourceDirectory = path.dirname(sourcePath);
     for (const target of markdownLinks(read(sourcePath))) {
       const pathname = decodeURIComponent(target.split("#", 1)[0]);
@@ -133,4 +170,24 @@ test("公开运行指引给出可直接执行的运行中升级与回退参数",
   assert.match(runtime, /tar -xf .*source\.tar.*twin-public-snapshot\.mjs.*verify/su);
   assert.match(runtime, /\$CANDIDATE\/tree.*--source/u);
   assert.match(readme, /运行中升级.*--source.*--restart.*同版本.*不会覆盖/u);
+});
+
+test("公开安装文档说明缺失资源提示、官方 CLI 自动创建和最小权限", () => {
+  const readme = read("README.md");
+  const globalConfiguration = read("docs/getting-started/global-configuration.md");
+  const knowledge = read("docs/features/enterprise-knowledge.md");
+  const dailyMemory = read("docs/features/daily-memory.md");
+  const permissions = read("docs/reference/feishu-permissions.md");
+
+  for (const content of [readme, globalConfiguration, knowledge, dailyMemory]) {
+    assert.match(content, /--create-missing-resources/u);
+  }
+  assert.match(globalConfiguration, /missing_resources/u);
+  assert.match(globalConfiguration, /created_resources_retained/u);
+  assert.match(knowledge, /wiki \+space-create.*--dry-run/su);
+  assert.match(dailyMemory, /drive \+create-folder.*--dry-run/su);
+  assert.match(permissions, /wiki:space:write_only/u);
+  assert.match(permissions, /space:folder:create/u);
+  assert.match(readme, /Base 和两张控制表仍需提前创建/u);
+  assert.match(readme, /多个同名资源时停止/u);
 });

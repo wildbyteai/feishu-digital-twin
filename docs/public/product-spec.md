@@ -127,9 +127,9 @@ CI 已使用只读默认权限和完整 commit SHA，运行格式检查、公共
 2. 启用 Codex；
 3. 完成全局配置。
 
-公开主入口为 `feishu-digital-twin setup --profile ... --timezone ... --codex-environment-root ... --approve-production-data`，普通用户无需预写 JSON，`lark-cli` 和 Codex 默认从 `PATH` 发现。省略 profile 时只读枚举：唯一 profile 自动选择，多个则要求明确指定。非 `bot_only` 或扩大已有消息范围时再追加 `--message-scope ... --approve-message-scope`；普通用户用 `--capabilities` 选择产品能力并生成最小业务域，高级用户才用 `--domains` 覆盖。高级用户仍可使用 `setup --config ...`。安装器负责按需初始化、配置或安全更新，收口飞书 user/bot 授权验证、Codex 结构化输出、消息范围与数据边界确认、本机权限、后台服务安装和真实状态读回；所有步骤成功后才解除冻结。重复执行会收敛，任何失败都恢复进入 setup 前的配置、冻结和服务状态，不得静默开始真实回复或业务写入。
+公开主入口为 `feishu-digital-twin setup --profile ... --timezone ... --codex-environment-root ... --approve-production-data`，普通用户无需预写 JSON，`lark-cli` 和 Codex 默认从 `PATH` 发现。省略 profile 时只读枚举：唯一 profile 自动选择，多个则要求明确指定。非 `bot_only` 或扩大已有消息范围时再追加 `--message-scope ... --approve-message-scope`；普通用户用 `--capabilities` 选择产品能力并生成最小业务域，高级用户才用 `--domains` 覆盖。选择企业知识或每日记忆但没有稳定资源引用时，setup 必须在任何写入前列出缺失资源、已有资源参数和 `--create-missing-resources`；部署者添加该开关后，setup 只编排官方 user 身份 CLI 的精确名称发现、`--dry-run`、创建和读回验证，不创建 Base/控制表或管理权限。高级用户仍可使用 `setup --config ...`，但不得与自动创建开关混用。安装器负责按需初始化、配置或安全更新，收口飞书 user/bot 授权验证、Codex 结构化输出、消息范围与数据边界确认、本机权限、后台服务安装和真实状态读回；所有步骤成功后才解除冻结。重复执行会收敛；本机失败恢复进入 setup 前的配置、冻结和服务状态，已成功创建的飞书资源保留并在重试时精确复用，不得静默开始真实回复或业务写入。
 
-截至 2026 年 7 月 26 日，统一 `setup`、声明式配置、三档消息范围、控制 Base、知识与日报目标、Doctor、服务管理、发行物构建、隐私扫描、SBOM、来源记录和公共仓均已实现。目标长期运行实例已完成版本切换后的 Doctor、后台服务、连续性、单应用单消费者和冻结/恢复验收；此前同一运行实现的 Bot/主体用户双身份回复和每日工作记忆真人证据保持有效。三档消息范围的真实租户独立复现仍按发布任务清单执行，不在此处提前声明完成。本版本没有新增运行时业务代码，源码完整测试、distribution、公开扫描和 npm 打包预演均通过。新资源创建继续复用官方 CLI dry-run 与部署者明确批准，不建设第二套创建流程；运行时也不新增工作流引擎、动作目录或长期聊天库。
+截至 2026 年 7 月 26 日，统一 `setup`、声明式配置、三档消息范围、控制 Base、知识与日报目标、缺资源结构化提示、官方 CLI 引导式创建、Doctor、服务管理、发行物构建、隐私扫描、SBOM、来源记录和公共仓均已实现。目标长期运行实例已完成版本切换后的 Doctor、后台服务、连续性、单应用单消费者和冻结/恢复验收；此前同一运行实现的 Bot/主体用户双身份回复和每日工作记忆真人证据保持有效。三档消息范围的真实租户独立复现仍按发布任务清单执行，不在此处提前声明完成。本次改动只增加 setup 的薄编排，不新增运行时业务代码：知识空间使用官方 `wiki +space-create`，日报目录使用官方 `drive +create-folder`，创建前 dry-run、创建后读回，ID/token 只进入本机私有配置。项目仍不建设第二套创建 API、工作流引擎、动作目录或长期聊天库。
 
 ## 不在范围内
 

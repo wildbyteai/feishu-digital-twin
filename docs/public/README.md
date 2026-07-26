@@ -83,9 +83,9 @@
 2. [启用一个允许处理相应数据的 Codex 环境](../getting-started/codex.md)；
 3. [完成全局配置](../getting-started/global-configuration.md)，由安装器发现官方双身份并生成本机私有配置。
 
-普通用户无需预写 JSON。引导安装默认使用 `message_scope=bot_only`、仅 `im` 域、7 天状态保留期和 3 天日志保留期；扩大消息范围必须再传 `--approve-message-scope`。普通用户用 `--capabilities` 选择能力；控制 Base、知识空间和每日记忆选项会自动补齐所需业务域，高级用户才直接使用 `--domains`。高级用户仍可使用 `setup --config ...`。`setup` 已实现按需初始化、配置验证、Doctor、后台服务安装与启动、状态读回和最后解除冻结；重复执行会收敛，失败会恢复进入 setup 前的配置、冻结和服务状态。`status` 会返回 `degraded`、`safe-but-disabled` 或 `ready`，`control` 提供启用、冻结、升级、回退和卸载入口。
+普通用户无需预写 JSON。引导安装默认使用 `message_scope=bot_only`、仅 `im` 域、7 天状态保留期和 3 天日志保留期；扩大消息范围必须再传 `--approve-message-scope`。普通用户用 `--capabilities` 选择能力；控制 Base、知识空间和每日记忆选项会自动补齐所需业务域，高级用户才直接使用 `--domains`。选择企业知识或每日记忆但没有稳定资源引用时，setup 先返回缺少什么以及选择已有资源所需的参数；部署者添加 `--create-missing-resources` 后，setup 使用官方 user 身份 CLI 完成精确名称发现、dry-run、创建和读回。Base 与控制表仍只使用已有资源。高级用户仍可使用 `setup --config ...`，但不能与自动创建开关混用。`setup` 已实现按需初始化、配置验证、Doctor、后台服务安装与启动、状态读回和最后解除冻结；重复执行会收敛，本机失败会恢复进入 setup 前的配置、冻结和服务状态，已创建的外部资源保留供安全重试。`status` 会返回 `degraded`、`safe-but-disabled` 或 `ready`，`control` 提供启用、冻结、升级、回退和卸载入口。
 
-截至 2026 年 7 月 26 日，公共仓、完整运行时、Codex 插件、本机产品生命周期、控制 Base、知识空间、每日记忆、公共扫描、SBOM、来源记录和消费者一致性校验均已落地。目标长期运行实例已经完成配置化接管：版本切换后 `readiness=ready`，真实 Doctor、三个后台角色、服务连续性、单应用单消费者和冻结/恢复均通过；此前同一运行实现的双身份消息与每日工作记忆真人证据保持有效。本版本没有新增运行时业务代码，源码完整测试、distribution、公开扫描和 npm 打包预演均通过。现有业务行为继续由 Codex、Skills 与自然语言配置驱动；可信代码不扩展为工作流引擎或长期会话库。新资源创建仍复用官方 CLI dry-run 与部署者明确批准。
+截至 2026 年 7 月 26 日，公共仓、完整运行时、Codex 插件、本机产品生命周期、控制 Base、知识空间、每日记忆、缺资源提示、官方 CLI 引导式创建、公共扫描、SBOM、来源记录和消费者一致性校验均已落地。目标长期运行实例已经完成配置化接管：版本切换后 `readiness=ready`，真实 Doctor、三个后台角色、服务连续性、单应用单消费者和冻结/恢复均通过；此前同一运行实现的双身份消息与每日工作记忆真人证据保持有效。本次只增加 setup 的薄编排，没有新增运行时业务代码。现有业务行为继续由 Codex、Skills 与自然语言配置驱动；知识空间和日报目录分别复用官方 `wiki +space-create`、`drive +create-folder`，可信代码不扩展为工作流引擎或长期会话库。
 
 整体边界与公开流程见[完整开源方案](open-source-plan.md)，公共发布准备状态、完整能力和验收要求见[完整公开产品规格](product-spec.md)。公共候选生成和隐私门见[公共快照流水线](../operations/public-snapshot.md)。
 

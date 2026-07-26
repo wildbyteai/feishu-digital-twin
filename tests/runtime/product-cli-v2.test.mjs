@@ -26,7 +26,7 @@ import { runServiceRole } from "../../product/src/service-host.mjs";
 const projectRoot = path.resolve(import.meta.dirname, "../..");
 const cliPath = path.join(projectRoot, "bin/feishu-digital-twin.mjs");
 const fakeCodexFixture = path.join(projectRoot, "tests/fixtures/bin/codex");
-const CURRENT_VERSION = "0.1.9";
+const CURRENT_VERSION = "0.1.10";
 let syntheticInstanceSequence = 0;
 
 function runCli(executable, args, { env = {}, expected = 0 } = {}) {
@@ -77,7 +77,15 @@ function fakeLarkCli(directory, {
   baseRuntimeData = [[true, "继承", ""]],
   baseRuntimeFields = ["数字分身启用", "允许域", "个性化规则"],
   botStatus = "available",
+  driveCreateExitCode = 0,
+  driveCreatedFolder = {
+    type: "folder",
+    token: "fixture_auto_daily_memory_folder",
+    name: "示例发现用户的每日工作记忆"
+  },
   driveListExitCode = 0,
+  driveRootFiles = [],
+  driveRootPages = null,
   exitCode = 0,
   includeOk = true,
   malformed = false,
@@ -85,6 +93,15 @@ function fakeLarkCli(directory, {
   tokenStatus = "valid",
   userStatus = "available",
   verified = true,
+  wikiCreateExitCode = 0,
+  wikiCreateMalformedAfterWrite = false,
+  wikiCreatedSpace = {
+    space_id: "fixture_auto_knowledge_space",
+    name: "示例发现用户的数字分身知识库"
+  },
+  wikiAfterCreateAdditionalSpaces = [],
+  wikiCreatedVisibleAfterWrite = true,
+  wikiListExitAfterCreateCode = 0,
   wikiSpaces = [{
     space_id: "fixture_private_space_id",
     name: "fixture_private_knowledge_name"
@@ -93,6 +110,43 @@ function fakeLarkCli(directory, {
   const filename = path.join(directory, "lark-cli");
   const log = path.join(directory, "lark-cli.log");
   const baseCounter = path.join(directory, "lark-base-counter");
+  const driveCreatedMarker = path.join(directory, "lark-drive-created");
+  const wikiCreatedMarker = path.join(directory, "lark-wiki-created");
+  const drivePages = driveRootPages ?? [driveRootFiles];
+  const drivePageResponses = (created) => drivePages.map((files, index) => {
+    const lastPage = index === drivePages.length - 1;
+    const pagination = lastPage
+      ? {}
+      : Object.fromEntries([[
+        ["next", "page", "token"].join("_"),
+        `fixture_drive_page_${index + 2}`
+      ]]);
+    return JSON.stringify({
+      ok: true,
+      data: {
+        files: created && lastPage ? [...files, driveCreatedFolder] : files,
+        has_more: !lastPage,
+        ...pagination
+      }
+    });
+  });
+  const driveBeforeCreate = drivePageResponses(false);
+  const driveAfterCreate = drivePageResponses(true);
+  const drivePageCases = (responses) => [
+    ...responses.slice(1).map((response, index) =>
+      `    *fixture_drive_page_${index + 2}*) printf '%s\\n' '${response}' ;;`
+    ),
+    `    *) printf '%s\\n' '${responses[0]}' ;;`
+  ];
+  const wikiBeforeCreate = JSON.stringify({ ok: true, data: { items: wikiSpaces } });
+  const wikiAfterCreate = JSON.stringify({
+    ok: true,
+    data: {
+      items: wikiCreatedVisibleAfterWrite
+        ? [...wikiSpaces, wikiCreatedSpace, ...wikiAfterCreateAdditionalSpaces]
+        : wikiSpaces
+    }
+  });
   const response = malformed ? "not-json" : JSON.stringify({
     ...(includeOk ? { ok: exitCode === 0 } : {}),
     verified,
@@ -139,13 +193,78 @@ function fakeLarkCli(directory, {
     "  esac",
     "  exit 0",
     "fi",
+    "if [ \"$3\" = \"wiki\" ] && [ \"$4\" = \"+space-create\" ]; then",
+    "  case \" $* \" in",
+    `    *" --dry-run "*) printf '%s\\n' '${JSON.stringify({ ok: true, data: { dry_run: true } })}'; exit 0 ;;`,
+    "  esac",
+    ...(wikiCreateExitCode === 0 ? [
+      `  printf '%s\\n' 'created' > '${wikiCreatedMarker}'`,
+      wikiCreateMalformedAfterWrite
+        ? "  printf '%s\\n' 'not-json'"
+        : `  printf '%s\\n' '${JSON.stringify({ ok: true, data: wikiCreatedSpace })}'`,
+      "  exit 0"
+    ] : [
+      `  printf '%s\\n' '${JSON.stringify({
+        ok: false,
+        error: {
+          type: "authorization",
+          subtype: "missing_scope",
+          missing_scopes: ["wiki:space:write_only"]
+        }
+      })}' >&2`,
+      `  exit ${wikiCreateExitCode}`
+    ]),
+    "fi",
     "if [ \"$3\" = \"wiki\" ] && [ \"$4\" = \"+space-list\" ]; then",
-    `  printf '%s\\n' '${JSON.stringify({ ok: true, data: { items: wikiSpaces } })}'`,
+    `  if [ -f '${wikiCreatedMarker}' ]; then`,
+    ...(wikiListExitAfterCreateCode === 0 ? [
+      `    printf '%s\\n' '${wikiAfterCreate}'`
+    ] : [
+      "    printf '%s\\n' 'read-back-failed' >&2",
+      `    exit ${wikiListExitAfterCreateCode}`
+    ]),
+    "  else",
+    `    printf '%s\\n' '${wikiBeforeCreate}'`,
+    "  fi",
     "  exit 0",
+    "fi",
+    "if [ \"$3\" = \"drive\" ] && [ \"$4\" = \"+create-folder\" ]; then",
+    "  case \" $* \" in",
+    `    *" --dry-run "*) printf '%s\\n' '${JSON.stringify({ ok: true, data: { dry_run: true } })}'; exit 0 ;;`,
+    "  esac",
+    ...(driveCreateExitCode === 0 ? [
+      `  printf '%s\\n' 'created' > '${driveCreatedMarker}'`,
+      `  printf '%s\\n' '${JSON.stringify({ ok: true, data: driveCreatedFolder })}'`,
+      "  exit 0"
+    ] : [
+      `  printf '%s\\n' '${JSON.stringify({
+        ok: false,
+        error: {
+          type: "authorization",
+          subtype: "missing_scope",
+          missing_scopes: ["drive:drive"]
+        }
+      })}' >&2`,
+      `  exit ${driveCreateExitCode}`
+    ]),
     "fi",
     "if [ \"$3\" = \"drive\" ] && [ \"$4\" = \"files\" ] && [ \"$5\" = \"list\" ]; then",
     ...(driveListExitCode === 0 ? [
-      `  printf '%s\\n' '${JSON.stringify({ ok: true, data: { files: [], has_more: false } })}'`,
+      "  params=''",
+      "  previous=''",
+      "  for argument in \"$@\"; do",
+      "    if [ \"$previous\" = \"--params\" ]; then params=$argument; break; fi",
+      "    previous=$argument",
+      "  done",
+      `  if [ -f '${driveCreatedMarker}' ]; then`,
+      "    case \"$params\" in",
+      ...drivePageCases(driveAfterCreate),
+      "    esac",
+      "  else",
+      "    case \"$params\" in",
+      ...drivePageCases(driveBeforeCreate),
+      "    esac",
+      "  fi",
       "  exit 0"
     ] : [
       `  printf '%s\\n' '${JSON.stringify({
@@ -160,7 +279,7 @@ function fakeLarkCli(directory, {
     ""
   ].join("\n"), { mode: 0o700 });
   chmodSync(filename, 0o700);
-  return { baseCounter, filename, log };
+  return { baseCounter, driveCreatedMarker, filename, log, wikiCreatedMarker };
 }
 
 function fakeLaunchctl(directory) {
@@ -301,6 +420,8 @@ function codexFixture({ lark: larkOptions = {} } = {}) {
     larkBaseCounter: larkFixture.baseCounter,
     larkCli: larkFixture.filename,
     larkLog: larkFixture.log,
+    larkDriveCreatedMarker: larkFixture.driveCreatedMarker,
+    larkWikiCreatedMarker: larkFixture.wikiCreatedMarker,
     codexBin,
     codexEnvironmentRoot
   };
@@ -434,6 +555,7 @@ test("公开 CLI 帮助只暴露产品级命令", () => {
   assert.match(result.stdout, /--knowledge-direction TEXT/u);
   assert.match(result.stdout, /--daily-memory-folder-token TOKEN/u);
   assert.match(result.stdout, /--daily-memory-folder-name NAME/u);
+  assert.match(result.stdout, /--create-missing-resources/u);
   assert.match(result.stdout, /--approve-message-scope/u);
   assert.doesNotMatch(
     result.stdout,
@@ -1323,6 +1445,562 @@ test("setup 无需预写 JSON 即可发现官方双身份并生成最小私有�
   assert.equal(serializedResult.includes("ou_fixture_discovered_principal"), false);
 });
 
+test("setup 选择资源型能力但未提供资源时明确告知已有与自动创建路径", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-resource-required-")), "install");
+  const tools = codexFixture();
+  const result = run([
+    "--root", root,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--capabilities", "message,enterprise_knowledge,daily_memory",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ], {
+    env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` },
+    expected: 1
+  });
+
+  const error = JSON.parse(result.stderr);
+  assert.equal(error.code, "GUIDED_RESOURCE_SELECTION_REQUIRED");
+  assert.match(error.message, /--create-missing-resources/u);
+  assert.deepEqual(error.missing_resources, [
+    "enterprise_knowledge",
+    "daily_memory"
+  ]);
+  assert.deepEqual(error.existing_resource_options, {
+    enterprise_knowledge: [
+      "--knowledge-space-name",
+      "--knowledge-space-id",
+      "--knowledge-direction"
+    ],
+    daily_memory: [
+      "--daily-memory-folder-token",
+      "--daily-memory-folder-name"
+    ]
+  });
+  assert.equal(error.automatic_creation_option, "--create-missing-resources");
+  assert.equal(existsSync(root), false);
+  assert.doesNotMatch(
+    readFileSync(tools.larkLog, "utf8"),
+    /\+(?:space-create|create-folder)\b/u
+  );
+  assert.equal(result.stderr.includes("示例发现用户"), false);
+  assert.equal(result.stderr.includes("ou_fixture_discovered_principal"), false);
+});
+
+test("已有实例缺少资源时先提示且不采集或改写本机运行状态", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-resource-existing-")), "install");
+  const tools = codexFixture();
+  const launchAgents = path.join(path.dirname(root), "launch-agents");
+  const launchctl = fakeStatefulLaunchctl(
+    mkdtempSync(path.join(tmpdir(), "twin-guided-resource-existing-launchctl-"))
+  );
+  const environment = {
+    PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}`
+  };
+  const common = [
+    "--root", root,
+    "--launch-agents-dir", launchAgents,
+    "--launchctl-bin", launchctl.filename,
+    "setup"
+  ];
+  assert.equal(json(run([
+    ...common,
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--capabilities", "message",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ], { env: environment })).status, "setup-complete");
+
+  const privateDirectory = path.join(root, "private");
+  const beforePrivate = snapshotDirectory(privateDirectory);
+  const beforeLaunchctl = readFileSync(launchctl.log, "utf8");
+  const result = run([
+    ...common,
+    "--capabilities", "message,enterprise_knowledge,daily_memory"
+  ], { env: environment, expected: 1 });
+
+  const error = JSON.parse(result.stderr);
+  assert.equal(error.code, "GUIDED_RESOURCE_SELECTION_REQUIRED");
+  assert.deepEqual(error.missing_resources, [
+    "enterprise_knowledge",
+    "daily_memory"
+  ]);
+  assert.deepEqual(snapshotDirectory(privateDirectory), beforePrivate);
+  assert.equal(readFileSync(launchctl.log, "utf8"), beforeLaunchctl);
+});
+
+test("setup 经明确开关用官方 CLI 创建、读回并复用知识空间和日报目录", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-resource-create-")), "install");
+  const tools = codexFixture({ lark: { wikiSpaces: [], driveRootFiles: [] } });
+  const launchAgents = path.join(path.dirname(root), "launch-agents");
+  const launchctl = fakeStatefulLaunchctl(
+    mkdtempSync(path.join(tmpdir(), "twin-guided-resource-create-launchctl-"))
+  );
+  const args = [
+    "--root", root,
+    "--launch-agents-dir", launchAgents,
+    "--launchctl-bin", launchctl.filename,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--capabilities", "message,enterprise_knowledge,daily_memory",
+    "--create-missing-resources",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ];
+  const environment = {
+    PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}`
+  };
+
+  const first = json(run(args, { env: environment }));
+  assert.equal(first.status, "setup-complete");
+  assert.deepEqual(first.resource_setup, {
+    created: ["enterprise_knowledge", "daily_memory"],
+    reused: []
+  });
+  const privateConfig = JSON.parse(readFileSync(
+    path.join(root, "private/config.json"),
+    "utf8"
+  ));
+  assert.deepEqual(privateConfig.authority_rules, [
+    "企业知识库：示例发现用户的数字分身知识库；space_id=fixture_auto_knowledge_space；适用于全部业务方向"
+  ]);
+  assert.deepEqual(privateConfig.daily_memory, {
+    folder_token: "fixture_auto_daily_memory_folder",
+    folder_name: "示例发现用户的每日工作记忆",
+    excluded_chat_ids: [],
+    excluded_topics: []
+  });
+  assert.equal(statSync(path.join(root, "private/config.json")).mode & 0o777, 0o600);
+  assert.equal(first.resource_setup.created.includes("console"), false);
+  for (const privateValue of [
+    "fixture_auto_knowledge_space",
+    "fixture_auto_daily_memory_folder",
+    "示例发现用户"
+  ]) {
+    assert.equal(JSON.stringify(first).includes(privateValue), false);
+  }
+
+  const second = json(run(args, { env: environment }));
+  assert.equal(second.status, "setup-complete");
+  assert.deepEqual(second.resource_setup, { created: [], reused: [] });
+
+  const calls = readFileSync(tools.larkLog, "utf8").trim().split("\n");
+  const wikiCreates = calls.filter((line) => /\bwiki \+space-create\b/u.test(line));
+  const driveCreates = calls.filter((line) => /\bdrive \+create-folder\b/u.test(line));
+  assert.equal(wikiCreates.length, 2);
+  assert.equal(driveCreates.length, 2);
+  assert.match(wikiCreates[0], /--dry-run/u);
+  assert.doesNotMatch(wikiCreates[1], /--dry-run/u);
+  assert.match(driveCreates[0], /--dry-run/u);
+  assert.doesNotMatch(driveCreates[1], /--dry-run/u);
+  for (const line of [...wikiCreates, ...driveCreates]) {
+    assert.match(line, /--as user/u);
+    assert.doesNotMatch(line, /--yes/u);
+  }
+  assert.match(wikiCreates[1], /示例发现用户的数字分身知识库/u);
+  assert.match(driveCreates[1], /示例发现用户的每日工作记忆/u);
+});
+
+test("setup 遍历 Drive 根目录全部分页并复用第二页已有日报目录", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-drive-pages-")), "install");
+  const targetFolder = {
+    type: "folder",
+    token: "fixture_second_page_daily_memory",
+    name: "示例发现用户的每日工作记忆"
+  };
+  const tools = codexFixture({
+    lark: {
+      driveRootPages: [[{
+        type: "folder",
+        token: "fixture_unrelated_first_page",
+        name: "其他目录"
+      }], [targetFolder]]
+    }
+  });
+  const launchctl = fakeStatefulLaunchctl(
+    mkdtempSync(path.join(tmpdir(), "twin-guided-drive-pages-launchctl-"))
+  );
+  const result = json(run([
+    "--root", root,
+    "--launch-agents-dir", path.join(path.dirname(root), "launch-agents"),
+    "--launchctl-bin", launchctl.filename,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--capabilities", "message,daily_memory",
+    "--create-missing-resources",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ], {
+    env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` }
+  }));
+
+  assert.deepEqual(result.resource_setup, {
+    created: [],
+    reused: ["daily_memory"]
+  });
+  const privateConfig = JSON.parse(readFileSync(
+    path.join(root, "private/config.json"),
+    "utf8"
+  ));
+  assert.equal(privateConfig.daily_memory.folder_token, targetFolder.token);
+  const calls = readFileSync(tools.larkLog, "utf8");
+  assert.match(calls, /fixture_drive_page_2/u);
+  assert.doesNotMatch(calls, /\bdrive \+create-folder\b/u);
+});
+
+test("setup 在创建结果损坏但远端唯一资源可读回时继续完成", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-create-recover-")), "install");
+  const tools = codexFixture({
+    lark: { wikiSpaces: [], wikiCreateMalformedAfterWrite: true }
+  });
+  const launchctl = fakeStatefulLaunchctl(
+    mkdtempSync(path.join(tmpdir(), "twin-guided-create-recover-launchctl-"))
+  );
+  const result = json(run([
+    "--root", root,
+    "--launch-agents-dir", path.join(path.dirname(root), "launch-agents"),
+    "--launchctl-bin", launchctl.filename,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--capabilities", "message,enterprise_knowledge",
+    "--create-missing-resources",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ], {
+    env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` }
+  }));
+
+  assert.deepEqual(result.resource_setup, {
+    created: ["enterprise_knowledge"],
+    reused: []
+  });
+  assert.equal(JSON.stringify(result).includes("fixture_auto_knowledge_space"), false);
+  assert.equal(existsSync(tools.larkWikiCreatedMarker), true);
+});
+
+test("setup 在创建结果和读回都不确定时明确标记可能保留且禁止安全重试声明", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-create-unknown-")), "install");
+  const tools = codexFixture({
+    lark: {
+      wikiSpaces: [],
+      wikiCreateMalformedAfterWrite: true,
+      wikiListExitAfterCreateCode: 1
+    }
+  });
+  const result = run([
+    "--root", root,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--capabilities", "message,enterprise_knowledge",
+    "--create-missing-resources",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ], {
+    env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` },
+    expected: 1
+  });
+
+  const error = JSON.parse(result.stderr);
+  assert.equal(error.code, "LARK_RESOURCE_CREATION_OUTCOME_UNKNOWN");
+  assert.deepEqual(error.created_resources_may_be_retained, ["enterprise_knowledge"]);
+  assert.equal(error.retry_safe, false);
+  assert.equal(existsSync(root), false);
+  assert.equal(existsSync(tools.larkWikiCreatedMarker), true);
+});
+
+test("setup 在不确定创建后暂未读到资源时不宣称可安全重试", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-create-not-visible-")), "install");
+  const tools = codexFixture({
+    lark: {
+      wikiSpaces: [],
+      wikiCreateMalformedAfterWrite: true,
+      wikiCreatedVisibleAfterWrite: false
+    }
+  });
+  const result = run([
+    "--root", root,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--capabilities", "message,enterprise_knowledge",
+    "--create-missing-resources",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ], {
+    env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` },
+    expected: 1
+  });
+
+  const error = JSON.parse(result.stderr);
+  assert.equal(error.code, "LARK_RESOURCE_CREATION_OUTCOME_UNKNOWN");
+  assert.deepEqual(error.created_resources_may_be_retained, ["enterprise_knowledge"]);
+  assert.equal(error.retry_safe, false);
+  assert.equal(existsSync(root), false);
+  assert.equal(existsSync(tools.larkWikiCreatedMarker), true);
+});
+
+test("setup 在成功创建后暂未读到资源时同样不宣称可安全重试", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-create-unverified-")), "install");
+  const tools = codexFixture({
+    lark: {
+      wikiSpaces: [],
+      wikiCreatedVisibleAfterWrite: false
+    }
+  });
+  const result = run([
+    "--root", root,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--capabilities", "message,enterprise_knowledge",
+    "--create-missing-resources",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ], {
+    env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` },
+    expected: 1
+  });
+
+  const error = JSON.parse(result.stderr);
+  assert.equal(error.code, "LARK_RESOURCE_CREATION_UNVERIFIED");
+  assert.deepEqual(error.created_resources_retained, ["enterprise_knowledge"]);
+  assert.deepEqual(error.created_resources_may_be_retained, ["enterprise_knowledge"]);
+  assert.equal(error.retry_safe, false);
+  assert.equal(existsSync(root), false);
+  assert.equal(existsSync(tools.larkWikiCreatedMarker), true);
+});
+
+test("setup 在成功创建后读回失败时不宣称可安全重试", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-create-readback-failed-")), "install");
+  const tools = codexFixture({
+    lark: {
+      wikiSpaces: [],
+      wikiListExitAfterCreateCode: 1
+    }
+  });
+  const result = run([
+    "--root", root,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--capabilities", "message,enterprise_knowledge",
+    "--create-missing-resources",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ], {
+    env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` },
+    expected: 1
+  });
+
+  const error = JSON.parse(result.stderr);
+  assert.equal(error.code, "LARK_RESOURCE_DISCOVERY_FAILED");
+  assert.equal(error.stage, "verify");
+  assert.deepEqual(error.created_resources_retained, ["enterprise_knowledge"]);
+  assert.deepEqual(error.created_resources_may_be_retained, ["enterprise_knowledge"]);
+  assert.equal(error.retry_safe, false);
+  assert.equal(existsSync(root), false);
+  assert.equal(existsSync(tools.larkWikiCreatedMarker), true);
+});
+
+test("setup 在成功创建后读回多个同名资源时失败关闭且不宣称可安全重试", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-create-readback-ambiguous-")), "install");
+  const tools = codexFixture({
+    lark: {
+      wikiSpaces: [],
+      wikiAfterCreateAdditionalSpaces: [{
+        space_id: "fixture_second_created_knowledge_space",
+        name: "示例发现用户的数字分身知识库"
+      }]
+    }
+  });
+  const result = run([
+    "--root", root,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--capabilities", "message,enterprise_knowledge",
+    "--create-missing-resources",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ], {
+    env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` },
+    expected: 1
+  });
+
+  const error = JSON.parse(result.stderr);
+  assert.equal(error.code, "LARK_RESOURCE_AMBIGUOUS");
+  assert.equal(error.stage, "verify");
+  assert.equal(error.match_count, 2);
+  assert.deepEqual(error.created_resources_retained, ["enterprise_knowledge"]);
+  assert.deepEqual(error.created_resources_may_be_retained, ["enterprise_knowledge"]);
+  assert.equal(error.retry_safe, false);
+  assert.equal(result.stderr.includes("fixture_second_created_knowledge_space"), false);
+  assert.equal(existsSync(root), false);
+});
+
+test("setup 对确定性名称的多个知识空间失败关闭且不猜测 ID", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-resource-ambiguous-")), "install");
+  const privateIds = ["fixture_private_space_a", "fixture_private_space_b"];
+  const tools = codexFixture({
+    lark: {
+      wikiSpaces: privateIds.map((space_id) => ({
+        space_id,
+        name: "示例发现用户的数字分身知识库"
+      }))
+    }
+  });
+  const result = run([
+    "--root", root,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--capabilities", "message,enterprise_knowledge",
+    "--create-missing-resources",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ], {
+    env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` },
+    expected: 1
+  });
+
+  const error = JSON.parse(result.stderr);
+  assert.equal(error.code, "LARK_RESOURCE_AMBIGUOUS");
+  assert.equal(error.resource_type, "enterprise_knowledge");
+  assert.equal(error.match_count, 2);
+  assert.deepEqual(error.existing_resource_options, [
+    "--knowledge-space-name",
+    "--knowledge-space-id",
+    "--knowledge-direction"
+  ]);
+  assert.equal(existsSync(root), false);
+  assert.doesNotMatch(readFileSync(tools.larkLog, "utf8"), /\bwiki \+space-create\b/u);
+  for (const privateId of privateIds) assert.equal(result.stderr.includes(privateId), false);
+});
+
+test("setup 创建资源缺少官方 scope 时保留错误提示且不自动追加 yes", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-resource-scope-")), "install");
+  const tools = codexFixture({
+    lark: { wikiSpaces: [], wikiCreateExitCode: 1 }
+  });
+  const result = run([
+    "--root", root,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--capabilities", "message,enterprise_knowledge",
+    "--create-missing-resources",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ], {
+    env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` },
+    expected: 1
+  });
+
+  const error = JSON.parse(result.stderr);
+  assert.equal(error.code, "LARK_RESOURCE_CREATION_FAILED");
+  assert.equal(error.resource_type, "enterprise_knowledge");
+  assert.equal(error.stage, "create");
+  assert.equal(error.authorization_required, true);
+  assert.deepEqual(error.missing_scopes, ["wiki:space:write_only"]);
+  assert.equal(existsSync(root), false);
+  const calls = readFileSync(tools.larkLog, "utf8");
+  assert.match(calls, /\bwiki \+space-create\b.*--dry-run/u);
+  assert.doesNotMatch(calls, /--yes/u);
+  assert.equal(existsSync(tools.larkWikiCreatedMarker), false);
+});
+
+test("setup 遇到官方 CLI exit 10 时停止且不自行追加 yes", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-resource-confirm-")), "install");
+  const tools = codexFixture({
+    lark: { wikiSpaces: [], wikiCreateExitCode: 10 }
+  });
+  const result = run([
+    "--root", root,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--capabilities", "message,enterprise_knowledge",
+    "--create-missing-resources",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ], {
+    env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` },
+    expected: 1
+  });
+
+  const error = JSON.parse(result.stderr);
+  assert.equal(error.code, "LARK_RESOURCE_CONFIRMATION_REQUIRED");
+  assert.equal(error.resource_type, "enterprise_knowledge");
+  assert.equal(error.stage, "create");
+  const calls = readFileSync(tools.larkLog, "utf8");
+  assert.doesNotMatch(calls, /--yes/u);
+  assert.equal(calls.match(/\bwiki \+space-create\b/gu)?.length, 2);
+  assert.equal(existsSync(tools.larkWikiCreatedMarker), false);
+  assert.equal(existsSync(root), false);
+});
+
+test("setup 本机失败后保留已创建资源并在重试时精确复用", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-resource-retry-")), "install");
+  mkdirSync(root, { mode: 0o700 });
+  const tools = codexFixture({ lark: { wikiSpaces: [], driveRootFiles: [] } });
+  const launchAgents = path.join(path.dirname(root), "launch-agents");
+  const failingLaunchctl = fakeStatefulLaunchctl(
+    mkdtempSync(path.join(tmpdir(), "twin-guided-resource-retry-failing-launchctl-")),
+    { failFirstStart: "app.feishu-digital-twin.resource-retry.realtime" }
+  );
+  const setupArgs = (launchctlBin) => [
+    "--root", root,
+    "--instance", "resource-retry",
+    "--launch-agents-dir", launchAgents,
+    "--launchctl-bin", launchctlBin,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--capabilities", "message,enterprise_knowledge,daily_memory",
+    "--create-missing-resources",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ];
+  const environment = {
+    PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}`
+  };
+
+  const failed = run(setupArgs(failingLaunchctl.filename), {
+    env: environment,
+    expected: 1
+  });
+  const error = JSON.parse(failed.stderr);
+  assert.equal(error.code, "SERVICE_START_FAILED");
+  assert.deepEqual(error.created_resources_retained, [
+    "enterprise_knowledge",
+    "daily_memory"
+  ]);
+  assert.equal(error.retry_safe, true);
+  assert.deepEqual(readdirSync(root), []);
+  assert.equal(existsSync(tools.larkWikiCreatedMarker), true);
+  assert.equal(existsSync(tools.larkDriveCreatedMarker), true);
+
+  const healthyLaunchctl = fakeStatefulLaunchctl(
+    mkdtempSync(path.join(tmpdir(), "twin-guided-resource-retry-healthy-launchctl-"))
+  );
+  const retried = json(run(setupArgs(healthyLaunchctl.filename), { env: environment }));
+  assert.equal(retried.status, "setup-complete");
+  assert.deepEqual(retried.resource_setup, {
+    created: [],
+    reused: ["enterprise_knowledge", "daily_memory"]
+  });
+  const calls = readFileSync(tools.larkLog, "utf8").trim().split("\n");
+  assert.equal(calls.filter((line) => /\bwiki \+space-create\b/u.test(line)).length, 2);
+  assert.equal(calls.filter((line) => /\bdrive \+create-folder\b/u.test(line)).length, 2);
+});
+
 test("setup 可用脚本化选项引用已有控制 Base 和每日记忆目录", () => {
   const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-resources-")), "install");
   const tools = codexFixture({ lark: { includeOk: false } });
@@ -1708,6 +2386,9 @@ test("setup 对已有资源参数缺项、多规则源和 --config 混用失败�
       missing_options: ["--daily-memory-folder-name"]
     }
   }, {
+    args: ["--create-missing-resources"],
+    code: "RESOURCE_CREATION_REQUIRES_CAPABILITIES"
+  }, {
     args: [
       "--config", "/tmp/fixture-private-config.json",
       "--daily-memory-folder-token", privateValue,
@@ -1719,6 +2400,15 @@ test("setup 对已有资源参数缺项、多规则源和 --config 混用失败�
         "--daily-memory-folder-token",
         "--daily-memory-folder-name"
       ]
+    }
+  }, {
+    args: [
+      "--config", "/tmp/fixture-private-config.json",
+      "--create-missing-resources"
+    ],
+    code: "SETUP_CONFIG_OPTION_CONFLICT",
+    expected: {
+      conflicting_options: ["--create-missing-resources"]
     }
   }, {
     args: [
@@ -1774,6 +2464,7 @@ test("setup 从声明式能力选择生成去重的最小飞书业务域", () =>
       "daily_memory",
       "console"
     ].join(","),
+    "--create-missing-resources",
     "--codex-environment-root", tools.codexEnvironmentRoot,
     "--approve-production-data"
   ], {
@@ -2061,13 +2752,17 @@ test("setup 遇到多个 profile 时返回选择清单且不初始化实例", ()
 
 test("setup 引导模式扩大消息范围仍要求独立确认且不初始化", () => {
   const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-scope-")), "install");
-  const tools = codexFixture({ lark: { includeOk: false } });
+  const tools = codexFixture({
+    lark: { includeOk: false, wikiSpaces: [], driveRootFiles: [] }
+  });
   const result = run([
     "--root", root,
     "setup",
     "--profile", "fixture-profile",
     "--timezone", "Asia/Shanghai",
     "--message-scope", "internal_visible",
+    "--capabilities", "message,enterprise_knowledge,daily_memory",
+    "--create-missing-resources",
     "--codex-environment-root", tools.codexEnvironmentRoot,
     "--approve-production-data"
   ], {
@@ -2077,6 +2772,12 @@ test("setup 引导模式扩大消息范围仍要求独立确认且不初始化",
 
   assert.equal(JSON.parse(result.stderr).code, "MESSAGE_SCOPE_APPROVAL_REQUIRED");
   assert.equal(existsSync(root), false);
+  assert.equal(existsSync(tools.larkWikiCreatedMarker), false);
+  assert.equal(existsSync(tools.larkDriveCreatedMarker), false);
+  assert.doesNotMatch(
+    readFileSync(tools.larkLog, "utf8"),
+    /\+(?:space-create|create-folder)\b/u
+  );
 });
 
 test("已配置实例的引导 setup 应用配置参数且扩围前仍要求确认", () => {
