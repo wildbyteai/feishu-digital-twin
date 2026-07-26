@@ -26,7 +26,7 @@ import { runServiceRole } from "../../product/src/service-host.mjs";
 const projectRoot = path.resolve(import.meta.dirname, "../..");
 const cliPath = path.join(projectRoot, "bin/feishu-digital-twin.mjs");
 const fakeCodexFixture = path.join(projectRoot, "tests/fixtures/bin/codex");
-const CURRENT_VERSION = "0.1.8";
+const CURRENT_VERSION = "0.1.9";
 let syntheticInstanceSequence = 0;
 
 function runCli(executable, args, { env = {}, expected = 0 } = {}) {
@@ -1006,7 +1006,7 @@ test("Codex 或飞书 Doctor 失败时 configure 不落盘且不会覆盖有效�
       lark: failure === "lark" ? { botStatus: "unavailable" } : {}
     });
     if (failure === "codex") {
-      writeFileSync(tools.codexBin, "#!/bin/sh\nexit 9\n", { mode: 0o700 });
+      writeFileSync(tools.codexBin, "#!/bin/sh\ncat >/dev/null\nexit 9\n", { mode: 0o700 });
       chmodSync(tools.codexBin, 0o700);
     }
     const candidate = writeCandidate(root, tools);

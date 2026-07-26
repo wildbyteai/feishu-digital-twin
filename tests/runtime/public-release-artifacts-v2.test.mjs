@@ -28,6 +28,13 @@ function readJson(relativePath) {
   return JSON.parse(readFileSync(path.join(projectRoot, relativePath), "utf8"));
 }
 
+function withoutNodeSqliteExperimentalWarning(stderr) {
+  return stderr.replace(
+    /^\(node:\d+\) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(?:\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)\n)?/u,
+    ""
+  );
+}
+
 test("公开配置示例保持中性并默认拒绝处理生产数据", () => {
   const config = readJson("config.example.json");
   const fullConfig = readJson("config.full.example.json");
@@ -566,7 +573,7 @@ test("公共快照 CLI 可以只读校验允许清单并输出脱敏摘要", () 
   });
 
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stderr, "");
+  assert.equal(withoutNodeSqliteExperimentalWarning(result.stderr), "");
   const output = JSON.parse(result.stdout);
   assert.deepEqual(output, {
     type: "public_snapshot_policy",

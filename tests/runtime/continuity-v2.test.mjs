@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  rmSync,
   statSync,
   symlinkSync,
   writeFileSync
@@ -1205,9 +1207,14 @@ test("隔离演练使用临时配置、临时 SQLite 和 Fake 适配器证明成
 
 test("默认测试环境移除宿主凭据且不给真实 lark-cli 或 Codex 留在 PATH", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "twin-test-env-"));
+  const hostBin = path.join(root, "host-bin");
+  const gitPath = path.join(hostBin, "git");
+  mkdirSync(hostBin, { mode: 0o700 });
+  writeFileSync(gitPath, "#!/bin/sh\nprintf 'git version 99.99.99\\n'\n", { mode: 0o700 });
   const environment = await createIsolatedTestEnvironment({
     root,
     nodePath: process.execPath,
+    gitPath,
     baseEnvironment: {
       PATH: "/opt/homebrew/bin:/usr/bin:/bin",
       OPENAI_API_KEY: "secret",
@@ -1224,10 +1231,64 @@ test("默认测试环境移除宿主凭据且不给真实 lark-cli 或 Codex 留
   assert.equal(environment.DATABASE_URL, undefined);
   assert.equal(environment.LANG, "zh_CN.UTF-8");
   assert.equal(environment.TWIN_TEST_MODE, "1");
+  assert.match(environment.NODE_OPTIONS, /^--require=".+"$/u);
+  assert.equal(environment.NODE_OPTIONS.includes("--disable-warning"), false);
   assert.equal(environment.HOME, path.join(root, "home"));
   assert.equal(environment.PATH.startsWith(path.join(root, "bin")), true);
   assert.equal(environment.PATH.includes("/opt/homebrew/bin"), false);
   assert.equal(existsSync(path.join(root, "bin", "node")), true);
+  assert.equal(statSync(path.join(root, "bin", "git")).isFile(), true);
+
+  const gitVersion = spawnSync("git", ["--version"], {
+    encoding: "utf8",
+    env: environment
+  });
+  assert.equal(gitVersion.status, 0, gitVersion.stderr);
+  assert.equal(gitVersion.stdout.trim(), "git version 99.99.99");
+
+  rmSync(gitPath);
+  const missingGit = spawnSync("git", ["--version"], {
+    encoding: "utf8",
+    env: environment
+  });
+  assert.notEqual(missingGit.status, 0);
+  assert.equal(missingGit.stdout, "");
+
+  const warnings = spawnSync(process.execPath, [
+    "--input-type=module",
+    "-e",
+    [
+      'import "node:sqlite";',
+      'process.emitWarning("SQLite is an experimental feature and might change at any time", "ExperimentalWarning");',
+      'process.emitWarning("unrelated experimental warning", "ExperimentalWarning");'
+    ].join("\n")
+  ], {
+    encoding: "utf8",
+    env: environment
+  });
+  assert.equal(warnings.status, 0, warnings.stderr);
+  assert.doesNotMatch(warnings.stderr, /SQLite is an experimental feature/u);
+  assert.match(warnings.stderr, /unrelated experimental warning/u);
+});
+
+test("隔离测试环境拒绝缺失、目录或不可执行的显式 Git 路径", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "twin-test-git-validation-"));
+  const directory = path.join(root, "directory");
+  const nonExecutable = path.join(root, "non-executable-git");
+  mkdirSync(directory, { mode: 0o700 });
+  writeFileSync(nonExecutable, "#!/bin/sh\nexit 0\n", { mode: 0o600 });
+
+  for (const gitPath of [path.join(root, "missing-git"), directory, nonExecutable]) {
+    await assert.rejects(
+      () => createIsolatedTestEnvironment({
+        root: mkdtempSync(path.join(tmpdir(), "twin-invalid-git-")),
+        nodePath: process.execPath,
+        gitPath,
+        baseEnvironment: { PATH: "/usr/bin:/bin" }
+      }),
+      /gitPath must resolve to an executable file/u
+    );
+  }
 });
 
 test("运行态健康快照以 SQLite 只读模式返回聚合数据且不改数据库", () => {
