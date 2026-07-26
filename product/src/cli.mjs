@@ -1142,7 +1142,7 @@ async function guidedSetupCandidate(options, environment, { current = null } = {
 
 function nodeVersionSupported() {
   const [major, minor] = process.versions.node.split(".").map(Number);
-  return major > 22 || (major === 22 && minor >= 5);
+  return major > 22 || (major === 22 && minor >= 13);
 }
 
 async function init(root, packageRoot, options) {

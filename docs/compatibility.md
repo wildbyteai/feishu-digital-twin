@@ -5,7 +5,7 @@
 | 组件 | 首个稳定版要求 |
 | --- | --- |
 | 操作系统 | macOS；使用用户级 LaunchAgent 托管后台角色 |
-| Node.js | `>=22.5.0` |
+| Node.js | `>=22.13.0` |
 | 飞书 CLI | 官方 `lark-cli`，安装时使用当前版本帮助、schema 和 Doctor 验证 |
 | Codex CLI | 支持非交互 `codex exec --ephemeral` 与结构化输出 |
 | 飞书身份 | 同一 profile 中可用的 Bot 与主体用户身份 |

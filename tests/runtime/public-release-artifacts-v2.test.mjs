@@ -229,6 +229,29 @@ test("公共 CI 使用最小权限、固定第三方 Action 并执行完整公�
   assert.match(dependabot, /interval:\s*"weekly"/u);
 });
 
+test("公开 Node 兼容基线支持无需实验开关的 node:sqlite", () => {
+  const manifest = readJson("package.json");
+  const workflow = readFileSync(
+    path.join(projectRoot, ".github/workflows/ci.yml"),
+    "utf8"
+  );
+  const compatibility = readFileSync(
+    path.join(projectRoot, "docs/compatibility.md"),
+    "utf8"
+  );
+  const productCli = readFileSync(
+    path.join(projectRoot, "product/src/cli.mjs"),
+    "utf8"
+  );
+  const readme = readFileSync(path.join(projectRoot, "README.md"), "utf8");
+
+  assert.equal(manifest.engines?.node, ">=22.13.0");
+  assert.match(workflow, /node-version:\s*"22\.13\.0"/u);
+  assert.match(compatibility, /Node\.js\s*\|\s*`>=22\.13\.0`/u);
+  assert.match(productCli, /major === 22 && minor >= 13/u);
+  assert.match(readme, /Node\.js 22\.13 或更高版本/u);
+});
+
 test("公共协作模板默认阻止真实飞书和企业数据进入公开讨论", () => {
   const relativePaths = [
     ".github/ISSUE_TEMPLATE/bug_report.yml",

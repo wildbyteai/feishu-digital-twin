@@ -1,6 +1,6 @@
 {
   "name": "feishu-digital-twin",
-  "version": "0.1.4",
+  "version": "0.1.8",
   "private": false,
   "description": "Self-hosted Feishu digital twin powered by Codex and official lark-cli components.",
   "license": "Apache-2.0",
@@ -17,7 +17,7 @@
     "feishu-digital-twin": "./bin/feishu-digital-twin.mjs"
   },
   "engines": {
-    "node": ">=22.5.0"
+    "node": ">=22.13.0"
   },
   "feishuDigitalTwin": {
     "stateFormat": 1
