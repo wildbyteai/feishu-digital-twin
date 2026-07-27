@@ -356,13 +356,13 @@ test("公共仓完整性门拒绝任何未进入允许清单的 tracked 文件",
   ]);
 });
 
-test("npm 包声明 Apache-2.0 并使用显式公共文件白名单", () => {
+test("本地 npm tarball 禁止 registry 发布并使用显式公共文件白名单", () => {
   const manifest = readJson("package.json");
   const publicPaths = new Set(
     readJson("release/public-snapshot.example.json").files.map((entry) => entry.path)
   );
 
-  assert.notEqual(manifest.private, true);
+  assert.equal(manifest.private, true);
   assert.equal(manifest.license, "Apache-2.0");
   assert.equal(typeof manifest.description, "string");
   assert.equal(manifest.description.length > 0, true);

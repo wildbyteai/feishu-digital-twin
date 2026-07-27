@@ -60,9 +60,9 @@
 
 ## 外部依赖与再分发
 
-- Node.js、飞书官方 `lark-cli`、官方 lark-* Skills 和 Codex CLI 都是部署者单独安装、授权和升级的外部依赖，不随源码归档、Codex 插件或 npm 包再分发。
-- npm 伴随运行时只使用 Node.js 内置模块，当前 `package.json` 没有 npm `dependencies`、`optionalDependencies` 或 `peerDependencies`。
-- GitHub Actions CI 使用只读默认权限和完整 commit SHA，运行格式检查、公共快照策略、通用 Secret/PII 扫描、完整合成测试、真实 npm package lifecycle 测试和 npm 文件清单；REUSE、CodeQL、Dependency Review、Dependabot 与 Scorecard 已配置为在公共仓启用。正式候选已经生成确定性 SPDX 2.3、本地未签名来源记录并通过 REUSE 与只读消费者校验；公开发布时仍须在真实公共仓对最终产物生成 GitHub/Sigstore 签名 attestation。
+- Node.js、飞书官方 `lark-cli`、官方 lark-* Skills 和 Codex CLI 都是部署者单独安装、授权和升级的外部依赖，不复制进源码或本地验证产物。
+- 伴随运行时只使用 Node.js 内置模块，当前 `package.json` 没有 npm `dependencies`、`optionalDependencies` 或 `peerDependencies`。
+- GitHub Actions CI 使用只读默认权限和完整 commit SHA，运行格式检查、公共快照策略、通用 Secret/PII 扫描、完整合成测试、真实 npm package lifecycle 测试和 npm 文件清单；REUSE、CodeQL、Dependency Review、Dependabot 与 Scorecard 已在公共仓启用。本地源码归档、Codex 插件包和 npm tarball 只用于一致性、隐私和安装闭环验证，不上传 GitHub Release、Codex Marketplace 或 npm registry。
 - 项目不会把外部 CLI、Skills、登录态、Keychain 内容或模型配置复制进发行物。
 
 ## 配置与隐私
@@ -85,9 +85,9 @@
 
 普通用户无需预写 JSON。引导安装默认使用 `message_scope=bot_only`、至少 `im,base` 域、7 天状态保留期和 3 天日志保留期；扩大消息范围必须再传 `--approve-message-scope`。Base 控制台及其“运行配置”“群级规则”两张表是完整安装的强制配置，但不要求提前手工创建。部署者可以传入已有 Base，或添加 `--create-missing-resources`，让 setup 使用官方 user 身份 CLI 完成精确名称发现、dry-run、Base/控制表/安全初始记录创建和读回。选择企业知识或每日记忆但没有稳定资源引用时，同一开关还会创建对应知识空间或日报目录。高级用户仍可使用 `setup --config ...`，但不能与自动创建开关混用。`setup` 已实现按需初始化、配置验证、Doctor、后台服务安装与启动、状态读回和最后解除冻结；重复执行会收敛，本机失败会恢复进入 setup 前的配置、冻结和服务状态，已创建的外部资源保留供安全重试。`status` 会返回 `degraded`、`safe-but-disabled` 或 `ready`，`control` 提供启用、冻结、升级、回退和卸载入口。
 
-截至 2026 年 7 月 27 日，公共仓、完整运行时、Codex 插件、本机产品生命周期、控制 Base、知识空间、每日记忆、缺资源提示、官方 CLI 引导式创建、公共扫描、SBOM、来源记录和消费者一致性校验均已落地。目标长期运行实例已经完成配置化接管：版本切换后 `readiness=ready`，真实 Doctor、三个后台角色、服务连续性、单应用单消费者和冻结/恢复均通过；此前同一运行实现的双身份消息与每日工作记忆真人证据保持有效。本次只增加 setup 的薄编排，没有新增运行时业务代码。现有业务行为继续由 Codex、Skills 与自然语言配置驱动；控制台、知识空间和日报目录分别复用官方 Base、`wiki +space-create`、`drive +create-folder` 命令，可信代码不扩展为通用资源平台、工作流引擎或长期会话库。
+截至 2026 年 7 月 27 日，公共仓、完整运行时、Codex 插件、本机产品生命周期、控制 Base、知识空间、每日记忆、缺资源提示、官方 CLI 引导式创建、公共扫描、SBOM、来源记录和消费者一致性校验均已落地。目标长期运行实例已经完成配置化接管：版本切换后 `readiness=ready`，真实 Doctor、三个后台角色、服务连续性、单应用单消费者和冻结/恢复均通过；此前同一运行实现的双身份消息与每日工作记忆真人证据保持有效。稳定版本只通过公共主干与不可变 Git 标签交付，用户由 Agent 或固定标签 `npx` 安装；当前阶段冻结新增功能。现有业务行为继续由 Codex、Skills 与自然语言配置驱动；控制台、知识空间和日报目录分别复用官方 Base、`wiki +space-create`、`drive +create-folder` 命令，可信代码不扩展为通用资源平台、工作流引擎或长期会话库。
 
-整体边界与公开流程见[完整开源方案](open-source-plan.md)，公共发布准备状态、完整能力和验收要求见[完整公开产品规格](product-spec.md)。公共候选生成和隐私门见[公共快照流水线](../operations/public-snapshot.md)。
+整体边界与标签分发流程见[完整开源方案](open-source-plan.md)，完整能力和验收要求见[完整公开产品规格](product-spec.md)。本地候选生成和隐私门见[公共快照流水线](../operations/public-snapshot.md)。
 
 ## 安全提示
 

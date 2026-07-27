@@ -26,7 +26,7 @@ import { runServiceRole } from "../../product/src/service-host.mjs";
 const projectRoot = path.resolve(import.meta.dirname, "../..");
 const cliPath = path.join(projectRoot, "bin/feishu-digital-twin.mjs");
 const fakeCodexFixture = path.join(projectRoot, "tests/fixtures/bin/codex");
-const CURRENT_VERSION = "0.1.11";
+const CURRENT_VERSION = "0.1.12";
 let syntheticInstanceSequence = 0;
 
 function runCli(executable, args, { env = {}, expected = 0 } = {}) {

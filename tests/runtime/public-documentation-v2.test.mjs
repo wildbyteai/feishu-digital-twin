@@ -32,7 +32,7 @@ function markdownLinks(content) {
     ));
 }
 
-test("公开上手、配置、运行和隐私文档随源码、公共快照和 npm 包完整发布", () => {
+test("公开上手、配置、运行和隐私文档纳入源码、公共快照与本地包校验", () => {
   const packageManifest = JSON.parse(read("package.json"));
   const publicSnapshot = JSON.parse(read("release/public-snapshot.example.json"));
   const packaged = new Set(packageManifest.files);
@@ -51,6 +51,8 @@ test("公开上手、配置、运行和隐私文档随源码、公共快照和 n
 
 test("根 README 保持中英文双语且关键安装边界一致", () => {
   const packageManifest = JSON.parse(read("package.json"));
+  const stableTag = `v${packageManifest.version}`;
+  const npxCommand = `npx --yes github:wildbyteai/feishu-digital-twin#${stableTag}`;
   const publicSnapshot = JSON.parse(read("release/public-snapshot.example.json"));
   const packaged = new Set(packageManifest.files);
   const publicFiles = new Set(publicSnapshot.files.map((entry) => entry.path));
@@ -110,26 +112,53 @@ test("根 README 保持中英文双语且关键安装边界一致", () => {
     assert.match(content, /base \+record-upsert/u);
     assert.match(content, /wiki \+space-create/u);
     assert.match(content, /drive \+create-folder/u);
+    assert.doesNotMatch(content, /^feishu-digital-twin\s/gmu);
   }
   assert.match(chinese, /Base 控制台是强制配置.*不要求提前手工创建/su);
   assert.match(english, /Base console is mandatory.*does not need to be created manually in advance/su);
   assert.equal(chinese.includes("当前稳定源码版本为"), false);
   assert.equal(english.includes("The current stable source release is"), false);
   for (const content of [chinese, english]) {
-    assert.match(content, /https:\/\/github\.com\/wildbyteai\/feishu-digital-twin\/releases/u);
-    assert.match(content, /git clone --depth 1 https:\/\/github\.com\/wildbyteai\/feishu-digital-twin\.git/u);
-    assert.match(content, /npm install --global \./u);
-    assert.match(content, /node bin\/feishu-digital-twin\.mjs --help/u);
-    assert.doesNotMatch(content, /git clone --branch v\d/u);
+    assert.equal(content.includes(`${npxCommand} --help`), true);
+    assert.equal(content.includes(`${npxCommand} setup --help`), true);
+    assert.doesNotMatch(content, /github\.com\/wildbyteai\/feishu-digital-twin\/releases/u);
+    assert.doesNotMatch(content, /git clone/u);
+    assert.doesNotMatch(content, /npm install --global \./u);
+    assert.doesNotMatch(content, /node bin\/feishu-digital-twin\.mjs/u);
   }
-  assert.match(chinese, /正式使用.*GitHub Releases.*最新开发代码.*`main`/su);
-  assert.match(english, /regular use.*GitHub Releases.*latest development code.*`main`/su);
-  assert.match(chinese, /完整配置和后台服务使用这种方式.*npm install --global \./su);
-  assert.match(english, /complete setup and background services.*npm install --global \./su);
-  assert.match(chinese, /只需查看 CLI 帮助或调试源码.*node bin\/feishu-digital-twin\.mjs --help/su);
-  assert.match(english, /inspect the CLI help or debug the source.*node bin\/feishu-digital-twin\.mjs --help/su);
-  assert.doesNotMatch(chinese, /把下文.*替换为/su);
-  assert.doesNotMatch(english, /replace .*examples below/su);
+  assert.match(chinese, /把下面这句话发给 Agent.*最新稳定 Git 标签.*setup.*doctor.*status/su);
+  assert.match(english, /Send the following sentence to an Agent.*latest stable Git tag.*setup.*doctor.*status/su);
+  assert.match(chinese, /稳定版本以不可变 Git 标签为准.*不依赖 GitHub Release/su);
+  assert.match(english, /Stable versions are identified by immutable Git tags.*does not require a GitHub Release/su);
+});
+
+test("运行文档只使用 Git 标签和 npx，不依赖 Release 或 npm 包", () => {
+  const content = read("docs/operations/runtime.md");
+
+  assert.match(content, /不可变 Git 标签/u);
+  assert.match(content, /github:wildbyteai\/feishu-digital-twin#<target-tag>/u);
+  assert.doesNotMatch(content, /npm-package\.tgz|正式 Release 候选|发布页上的签名/u);
+  assert.doesNotMatch(content, /^feishu-digital-twin\s/gmu);
+});
+
+test("公开分发策略固定为主干、不可变标签和 npx", () => {
+  const content = [
+    read("docs/adr/0005-full-feature-public-product.md"),
+    read("docs/operations/public-snapshot.md"),
+    read("docs/public/README.md"),
+    read("docs/public/open-source-plan.md"),
+    read("docs/public/product-spec.md")
+  ].join("\n");
+
+  assert.match(content, /稳定用户交付只有公共源码仓与不可变 Git 标签/u);
+  assert.match(content, /不创建 GitHub Release，不发布 Codex Marketplace 或 npm registry/u);
+  assert.match(content, /当前阶段冻结新增功能/u);
+  assert.match(content, /npx --yes "github:wildbyteai\/feishu-digital-twin#<stable-tag>"/u);
+  assert.doesNotMatch(content, /提供公开源码、Codex Marketplace 安装入口/u);
+  assert.doesNotMatch(content, /同一版本生成三种完整候选/u);
+  assert.doesNotMatch(content, /公开发布时仍必须|公共发布签名/u);
+  assert.doesNotMatch(content, /正式发布仍需/u);
+  assert.doesNotMatch(content, /发布 GitHub Release、Marketplace、npm/u);
 });
 
 test("根 README 只用三个主步骤引导真实安装并链接全部详细指引", () => {
@@ -218,15 +247,17 @@ test("公开运行指引给出可直接执行的运行中升级与回退参数",
   for (const content of [runtime, globalConfiguration]) {
     assert.match(
       content,
-      /feishu-digital-twin control upgrade --source <absolute-new-release-tree> --restart/u
+      /npx --yes "github:wildbyteai\/feishu-digital-twin#<target-tag>" control upgrade --restart/u
     );
-    assert.match(content, /feishu-digital-twin control rollback --restart/u);
+    assert.match(
+      content,
+      /npx --yes github:wildbyteai\/feishu-digital-twin#v0\.1\.12 control rollback --restart/u
+    );
   }
   assert.match(runtime, /同一版本号.*status=unchanged.*不会覆盖/u);
-  assert.match(runtime, /source\.tar.*SHA256SUMS/su);
-  assert.match(runtime, /tar -xf .*source\.tar.*twin-public-snapshot\.mjs.*verify/su);
-  assert.match(runtime, /\$CANDIDATE\/tree.*--source/u);
-  assert.match(readme, /运行中升级.*--source.*--restart.*同版本.*不会覆盖/u);
+  assert.match(runtime, /不依赖 GitHub Release、npm 或 Marketplace/u);
+  assert.match(runtime, /公共快照.*不是用户安装前置条件/u);
+  assert.match(readme, /升级时直接运行目标稳定标签.*--restart.*同版本号不会覆盖/su);
 });
 
 test("公开安装文档说明缺失资源提示、官方 CLI 自动创建和最小权限", () => {
@@ -259,7 +290,10 @@ test("setup 首装指引明确区分日常总开关、部署确认和 Base 建�
   const consoleGuide = read("docs/feishu-console.md");
 
   for (const content of [chinese, english]) {
-    assert.match(content, /feishu-digital-twin setup --help/u);
+    assert.match(
+      content,
+      /npx --yes github:wildbyteai\/feishu-digital-twin#v0\.1\.12 setup --help/u
+    );
     assert.match(content, /数字分身启用/u);
     assert.match(content, /safe-but-disabled/u);
     assert.match(content, /--approve-production-data/u);

@@ -16,7 +16,7 @@
    - `个性化规则`：多行文本，可以留空，也可以填写自然语言职责和知识路由。
 5. “群级规则”表包含 `群ID`（文本）、`启用`（复选框）和 `个性化规则`（多行文本）三个必填字段；`群名称` 是可选的展示字段。自动创建时不写任何群规则记录。
 6. 运行配置没有记录时，setup 先 dry-run，再用 `base +record-upsert` 写入唯一的安全初始记录；如果已有多条运行记录则失败关闭。
-7. setup 完成后先运行 `feishu-digital-twin status`。总开关关闭时看到 `readiness=safe-but-disabled` 属于正常、安全的首装状态。
+7. setup 完成后先通过同一稳定标签运行 `status`。总开关关闭时看到 `readiness=safe-but-disabled` 属于正常、安全的首装状态。
 8. 确认身份、权限和三个后台角色均正常后，勾选 `数字分身启用`。配置最长约 10 秒生效；再次运行 status，直到显示 `readiness=ready`。
 
 `--approve-production-data` 和 `--approve-message-scope` 是部署时确认；`--create-missing-resources` 明确允许创建缺失的 Base、控制表、初始记录、Wiki 空间和 Drive 目录。它们都不是日常开关。setup 只补齐自己按确定性名称创建但尚未完成的资源；部署者显式传入的已有 Base 始终只读验证，不会被自动加字段、改字段或清空记录。
@@ -46,7 +46,7 @@
 已有 Base 可通过普通 setup 引用；三个参数必须同时提供：
 
 ```bash
-feishu-digital-twin setup \
+npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
   --capabilities message \
   --console-base-token <base-token> \
   --console-runtime-table <运行配置表名或ID> \
@@ -59,7 +59,7 @@ setup 自动补齐 `base` 业务域，通过官方 `base +record-list` 只读两
 没有现成 Base 时无需先打开飞书手工建表：
 
 ```bash
-feishu-digital-twin setup \
+npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
   --capabilities message \
   --create-missing-resources \
   <其他必需的 setup 选项>

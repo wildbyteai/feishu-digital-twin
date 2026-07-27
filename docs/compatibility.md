@@ -23,7 +23,7 @@
 
 ## 验证与升级
 
-安装前运行飞书 CLI 身份与事件检查、Codex Doctor 和 `feishu-digital-twin status`。升级先安装到隔离版本目录，验证后原子切换；失败自动切回上一已验证版本。飞书 CLI 或 Codex 发生重大升级后，应重新运行 setup/Doctor，再恢复生产处理。
+安装前运行飞书 CLI 身份与事件检查、Codex Doctor，并通过同一稳定标签运行 `status`。升级先安装到隔离版本目录，验证后原子切换；失败自动切回上一已验证版本。飞书 CLI 或 Codex 发生重大升级后，应重新运行 setup/Doctor，再恢复生产处理。
 
 Linux 或 Windows 只有在相应 ServiceHost、睡眠恢复、路径权限、升级回退和完整能力矩阵通过独立验收后，才可以加入支持矩阵。
 

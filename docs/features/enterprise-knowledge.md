@@ -21,7 +21,7 @@ setup 始终生成上述统一格式。对于已有 Base 或高级配置中的�
 普通引导式 setup 的 Base 控制台是强制配置。没有现成控制 Base、但希望复用已有知识空间时，可以让 setup 创建 Base，并把这条知识路由写入新 Base 的初始“个性化规则”：
 
 ```bash
-feishu-digital-twin setup \
+npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
   --capabilities message,enterprise_knowledge \
   --knowledge-space-name <知识空间名称> \
   --knowledge-space-id <space-id> \
@@ -35,7 +35,7 @@ feishu-digital-twin setup \
 没有现成空间时，可明确批准 setup 调用官方组件创建：
 
 ```bash
-feishu-digital-twin setup \
+npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
   --capabilities message,enterprise_knowledge \
   --create-missing-resources \
   <其他必需的 setup 选项>
