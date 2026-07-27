@@ -51,7 +51,6 @@ test("公开上手、配置、运行和隐私文档随源码、公共快照和 n
 
 test("根 README 保持中英文双语且关键安装边界一致", () => {
   const packageManifest = JSON.parse(read("package.json"));
-  const releaseTag = `v${packageManifest.version}`;
   const publicSnapshot = JSON.parse(read("release/public-snapshot.example.json"));
   const packaged = new Set(packageManifest.files);
   const publicFiles = new Set(publicSnapshot.files.map((entry) => entry.path));
@@ -117,8 +116,20 @@ test("根 README 保持中英文双语且关键安装边界一致", () => {
   assert.equal(chinese.includes("当前稳定源码版本为"), false);
   assert.equal(english.includes("The current stable source release is"), false);
   for (const content of [chinese, english]) {
-    assert.equal(content.includes(`git clone --branch ${releaseTag} --depth 1`), true);
+    assert.match(content, /https:\/\/github\.com\/wildbyteai\/feishu-digital-twin\/releases/u);
+    assert.match(content, /git clone --depth 1 https:\/\/github\.com\/wildbyteai\/feishu-digital-twin\.git/u);
+    assert.match(content, /npm install --global \./u);
+    assert.match(content, /node bin\/feishu-digital-twin\.mjs --help/u);
+    assert.doesNotMatch(content, /git clone --branch v\d/u);
   }
+  assert.match(chinese, /正式使用.*GitHub Releases.*最新开发代码.*`main`/su);
+  assert.match(english, /regular use.*GitHub Releases.*latest development code.*`main`/su);
+  assert.match(chinese, /完整配置和后台服务使用这种方式.*npm install --global \./su);
+  assert.match(english, /complete setup and background services.*npm install --global \./su);
+  assert.match(chinese, /只需查看 CLI 帮助或调试源码.*node bin\/feishu-digital-twin\.mjs --help/su);
+  assert.match(english, /inspect the CLI help or debug the source.*node bin\/feishu-digital-twin\.mjs --help/su);
+  assert.doesNotMatch(chinese, /把下文.*替换为/su);
+  assert.doesNotMatch(english, /replace .*examples below/su);
 });
 
 test("根 README 只用三个主步骤引导真实安装并链接全部详细指引", () => {

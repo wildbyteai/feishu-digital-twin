@@ -51,16 +51,27 @@ This project is for individuals or teams that can self-host the runtime, adminis
 - a model-service environment approved to process the selected Feishu business data;
 - the Base console is mandatory for a normal complete installation, but it does not have to be created manually in advance. Existing Base, knowledge-space, and daily-memory resources can be supplied, or `setup` can create them through the official CLI.
 
-Install a fixed version from GitHub:
+### Install the CLI
+
+This project is currently distributed as source code through GitHub. For regular use, download and extract the required version from [GitHub Releases](https://github.com/wildbyteai/feishu-digital-twin/releases). To inspect the latest development code, clone `main`:
 
 ```bash
-git clone --branch v0.1.11 --depth 1 https://github.com/wildbyteai/feishu-digital-twin.git
+git clone --depth 1 https://github.com/wildbyteai/feishu-digital-twin.git
 cd feishu-digital-twin
+```
+
+From the source directory, install the CLI globally. Use this method for complete setup and background services:
+
+```bash
 npm install --global .
 feishu-digital-twin --help
 ```
 
-If you do not want a global installation, replace `feishu-digital-twin` in the examples below with `node bin/feishu-digital-twin.mjs` while inside the repository.
+To inspect the CLI help or debug the source, skip installation and run the entry point directly from the source directory:
+
+```bash
+node bin/feishu-digital-twin.mjs --help
+```
 
 ## What `setup` automates
 
