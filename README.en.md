@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Feishu Digital Twin contributors
+SPDX-License-Identifier: Apache-2.0
+-->
+
 [中文](./README.md) | [English](./README.en.md)
 
 # Feishu Digital Twin
