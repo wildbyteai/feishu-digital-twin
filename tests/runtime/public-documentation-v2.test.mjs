@@ -114,8 +114,8 @@ test("根 README 保持中英文双语且关键安装边界一致", () => {
   }
   assert.match(chinese, /Base 控制台是强制配置.*不要求提前手工创建/su);
   assert.match(english, /Base console is mandatory.*does not need to be created manually in advance/su);
-  assert.equal(chinese.includes(`当前稳定源码版本为 \`${releaseTag}\``), true);
-  assert.equal(english.includes(`The current stable source release is \`${releaseTag}\``), true);
+  assert.equal(chinese.includes("当前稳定源码版本为"), false);
+  assert.equal(english.includes("The current stable source release is"), false);
   for (const content of [chinese, english]) {
     assert.equal(content.includes(`git clone --branch ${releaseTag} --depth 1`), true);
   }
