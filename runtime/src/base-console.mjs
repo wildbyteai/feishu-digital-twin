@@ -1,11 +1,65 @@
 import { runLarkCommand } from "../../executor/src/lark-guard.mjs";
 
+export const BASE_CONSOLE_DEFAULT_REFRESH_SECONDS = 10;
+export const BASE_CONSOLE_SETUP_SCHEMA = Object.freeze({
+  runtime_table: Object.freeze({
+    record_requirement: "exactly_one",
+    fields: Object.freeze([
+      Object.freeze({
+        name: "名称",
+        type: "text",
+        required: false,
+        initial_value: "默认配置"
+      }),
+      Object.freeze({
+        name: "数字分身启用",
+        type: "checkbox",
+        required: true,
+        role: "daily_master_switch",
+        legacy_aliases: Object.freeze(["生产执行"]),
+        initial_value: false
+      }),
+      Object.freeze({
+        name: "允许域",
+        type: "multi_select",
+        required: true,
+        initial_value: Object.freeze(["继承"])
+      }),
+      Object.freeze({
+        name: "个性化规则",
+        type: "multiline_text",
+        required: true,
+        initial_value: ""
+      })
+    ])
+  }),
+  group_rules_table: Object.freeze({
+    record_requirement: "zero_or_more",
+    fields: Object.freeze([
+      Object.freeze({ name: "群名称", type: "text", required: false }),
+      Object.freeze({ name: "群ID", type: "text", required: true }),
+      Object.freeze({ name: "启用", type: "checkbox", required: true }),
+      Object.freeze({ name: "个性化规则", type: "multiline_text", required: true })
+    ])
+  })
+});
+
+const runtimeMasterSwitch = BASE_CONSOLE_SETUP_SCHEMA.runtime_table.fields.find(
+  ({ role }) => role === "daily_master_switch"
+);
 const RUNTIME_TABLE_FIELDS = Object.freeze({
-  all: Object.freeze(["允许域", "个性化规则"]),
-  any: Object.freeze(["数字分身启用", "生产执行"])
+  all: Object.freeze(BASE_CONSOLE_SETUP_SCHEMA.runtime_table.fields
+    .filter(({ required, name }) => required && name !== runtimeMasterSwitch.name)
+    .map(({ name }) => name)),
+  any: Object.freeze([
+    runtimeMasterSwitch.name,
+    ...runtimeMasterSwitch.legacy_aliases
+  ])
 });
 const GROUP_RULES_TABLE_FIELDS = Object.freeze({
-  all: Object.freeze(["启用", "群ID", "个性化规则"]),
+  all: Object.freeze(BASE_CONSOLE_SETUP_SCHEMA.group_rules_table.fields
+    .filter(({ required }) => required)
+    .map(({ name }) => name)),
   any: Object.freeze([])
 });
 
@@ -65,46 +119,78 @@ function allowedDomains(fields, localDomains) {
   return domains;
 }
 
-function requireTableFields(fields, requirements) {
+function requireTableFields(fields, requirements, { requiredPrimaryField = null } = {}) {
   const available = new Set(fields.filter((field) => typeof field === "string"));
   const missing = requirements.all.filter((field) => !available.has(field));
   const missingAlternative = requirements.any.length > 0 &&
     requirements.any.every((field) => !available.has(field));
-  if (missing.length > 0 || missingAlternative) {
+  const missingPrimary = requiredPrimaryField !== null && !available.has(requiredPrimaryField);
+  if (missing.length > 0 || missingAlternative || missingPrimary) {
     throw new Error("Base console table is missing required fields");
   }
 }
 
-async function records(config, tableId, runner, fieldRequirements) {
-  const argv = [
-    config.lark_cli_bin ?? "lark-cli",
-    "--profile",
-    config.profile,
-    "base",
-    "+record-list",
-    "--base-token",
-    config.console.base_token,
-    "--table-id",
-    tableId,
-    "--limit",
-    "200",
-    "--as",
-    "user",
-    "--format",
-    "json"
-  ];
-  const result = await runner(argv);
-  if (result.exit_code !== 0) throw new Error(`Base console read failed for ${tableId}`);
-  const envelope = JSON.parse(result.stdout);
-  const fields = envelope.data?.fields;
-  const rows = envelope.data?.data;
-  if (envelope.ok !== true || !Array.isArray(fields) || !Array.isArray(rows)) {
-    throw new Error(`Base console returned an invalid record list for ${tableId}`);
+async function records(config, tableId, runner, fieldRequirements, fieldOptions = {}) {
+  const pageSize = 200;
+  const maximumPages = 1_000;
+  const rows = [];
+  let fields = null;
+  let offset = 0;
+  for (let page = 0; page < maximumPages; page += 1) {
+    const argv = [
+      config.lark_cli_bin ?? "lark-cli",
+      "--profile",
+      config.profile,
+      "base",
+      "+record-list",
+      "--base-token",
+      config.console.base_token,
+      "--table-id",
+      tableId,
+      "--offset",
+      String(offset),
+      "--limit",
+      String(pageSize),
+      "--as",
+      "user",
+      "--format",
+      "json"
+    ];
+    const result = await runner(argv);
+    if (result.exit_code !== 0) throw new Error(`Base console read failed for ${tableId}`);
+    const envelope = JSON.parse(result.stdout);
+    const pageFields = envelope.data?.fields;
+    const pageRows = envelope.data?.data;
+    if (envelope.ok !== true || !Array.isArray(pageFields) || !Array.isArray(pageRows)) {
+      throw new Error(`Base console returned an invalid record list for ${tableId}`);
+    }
+    requireTableFields(pageFields, fieldRequirements, fieldOptions);
+    if (fields === null) {
+      fields = pageFields;
+    } else if (
+      fields.length !== pageFields.length ||
+      fields.some((field, index) => field !== pageFields[index])
+    ) {
+      throw new Error(`Base console returned inconsistent record pages for ${tableId}`);
+    }
+    rows.push(...pageRows);
+    const explicitHasMore = typeof envelope.data?.has_more === "boolean"
+      ? envelope.data.has_more
+      : typeof envelope.data?.hasMore === "boolean"
+        ? envelope.data.hasMore
+        : null;
+    const hasMore = explicitHasMore ?? pageRows.length === pageSize;
+    if (!hasMore) {
+      return rows.map((row) => ({
+        fields: Object.fromEntries(fields.map((field, index) => [field, row[index]]))
+      }));
+    }
+    if (pageRows.length === 0) {
+      throw new Error(`Base console returned an invalid pagination page for ${tableId}`);
+    }
+    offset += pageRows.length;
   }
-  requireTableFields(fields, fieldRequirements);
-  return rows.map((row) => ({
-    fields: Object.fromEntries(fields.map((field, index) => [field, row[index]]))
-  }));
+  throw new Error(`Base console pagination exceeded the safety limit for ${tableId}`);
 }
 
 function validateConsole(config) {
@@ -142,21 +228,27 @@ function withLocalRuntimeSwitch(config) {
   };
 }
 
-export async function loadBaseRuntimeSwitch(config, { runner = runLarkCommand } = {}) {
+export async function loadBaseRuntimeSwitch(config, {
+  runner = runLarkCommand,
+  requirePrimaryMasterSwitch = false
+} = {}) {
   if (!usesBaseConsole(config)) return localRuntimeSwitch(config);
   validateConsole(config);
   const runtimeRecords = await records(
     config,
     config.console.runtime_table,
     runner,
-    RUNTIME_TABLE_FIELDS
+    RUNTIME_TABLE_FIELDS,
+    {
+      requiredPrimaryField: requirePrimaryMasterSwitch ? runtimeMasterSwitch.name : null
+    }
   );
   return runtimeSwitch(runtimeRecords);
 }
 
 export function createBaseRuntimeSwitchRefresher(config, {
   runner = runLarkCommand,
-  ttlMs = 10_000,
+  ttlMs = BASE_CONSOLE_DEFAULT_REFRESH_SECONDS * 1_000,
   now = () => Date.now()
 } = {}) {
   if (!Number.isInteger(ttlMs) || ttlMs < 0) {
@@ -176,7 +268,7 @@ export function createBaseRuntimeSwitchRefresher(config, {
 
 export function createBaseConsoleRefresher(config, {
   runner = runLarkCommand,
-  ttlMs = 10_000,
+  ttlMs = BASE_CONSOLE_DEFAULT_REFRESH_SECONDS * 1_000,
   now = () => Date.now(),
   initialConfig = config
 } = {}) {
@@ -199,12 +291,17 @@ export function createBaseConsoleRefresher(config, {
   };
 }
 
-export async function loadBaseConsole(config, { runner = runLarkCommand } = {}) {
+export async function loadBaseConsole(config, {
+  runner = runLarkCommand,
+  requirePrimaryMasterSwitch = false
+} = {}) {
   if (!usesBaseConsole(config)) return withLocalRuntimeSwitch(config);
   validateConsole(config);
 
   const [runtimeRecords, groupRuleRecords] = await Promise.all([
-    records(config, config.console.runtime_table, runner, RUNTIME_TABLE_FIELDS),
+    records(config, config.console.runtime_table, runner, RUNTIME_TABLE_FIELDS, {
+      requiredPrimaryField: requirePrimaryMasterSwitch ? runtimeMasterSwitch.name : null
+    }),
     records(config, config.console.group_rules_table, runner, GROUP_RULES_TABLE_FIELDS)
   ]);
   const productionEnabled = runtimeSwitch(runtimeRecords);

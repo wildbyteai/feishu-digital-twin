@@ -1,6 +1,25 @@
 # 飞书 Base 控制台
 
-控制台只用两张表，由官方 `lark-base` Skill 和 lark-cli 创建、编辑和读取。
+控制台只用两张表，由官方 `lark-base` Skill 和 `lark-cli` 创建、编辑和读取。它是普通完整安装的强制配置；运行时仍保留 `local` 模式读取旧部署，但新引导式安装最终统一使用 Base。
+
+## 首次创建清单
+
+首次安装有两条路径：提供一个已经符合下列结构的 Base，或者给 `setup` 增加 `--create-missing-resources`，由它只编排官方 CLI 自动创建。自动创建流程如下：
+
+1. 用主体 user 身份执行 `base +title-resolve`，按 `<主体用户显示名>的数字分身控制台` 精确查找并复用唯一同名 Base。
+2. 未找到时先执行 `base +base-create --dry-run`，再创建 Base，并同时创建第一张“运行配置”表。
+3. 通过 `base +table-list` 和 `base +field-list` 读回结构；缺少“群级规则”表时先 dry-run，再用 `base +table-create` 补齐。已存在但结构冲突的同名表只读失败，不擅自改造。
+4. “运行配置”表必须只保留一条记录，字段和安全初始值如下：
+   - `名称`：可选的展示字段，文本，建议填写“默认配置”；
+   - `数字分身启用`：必填复选框，首装时先不勾选；旧字段 `生产执行` 只保留旧版兼容，新安装不要再使用；
+   - `允许域`：多选，只填“继承”；
+   - `个性化规则`：多行文本，可以留空，也可以填写自然语言职责和知识路由。
+5. “群级规则”表包含 `群ID`（文本）、`启用`（复选框）和 `个性化规则`（多行文本）三个必填字段；`群名称` 是可选的展示字段。自动创建时不写任何群规则记录。
+6. 运行配置没有记录时，setup 先 dry-run，再用 `base +record-upsert` 写入唯一的安全初始记录；如果已有多条运行记录则失败关闭。
+7. setup 完成后先运行 `feishu-digital-twin status`。总开关关闭时看到 `readiness=safe-but-disabled` 属于正常、安全的首装状态。
+8. 确认身份、权限和三个后台角色均正常后，勾选 `数字分身启用`。配置最长约 10 秒生效；再次运行 status，直到显示 `readiness=ready`。
+
+`--approve-production-data` 和 `--approve-message-scope` 是部署时确认；`--create-missing-resources` 明确允许创建缺失的 Base、控制表、初始记录、Wiki 空间和 Drive 目录。它们都不是日常开关。setup 只补齐自己按确定性名称创建但尚未完成的资源；部署者显式传入的已有 Base 始终只读验证，不会被自动加字段、改字段或清空记录。
 
 ## 运行配置
 
@@ -8,7 +27,7 @@
 
 | 字段 | 类型 | 用途 |
 | --- | --- | --- |
-| 名称 | 文本 | 配置名称 |
+| 名称 | 文本 | 可选；便于人识别配置 |
 | 数字分身启用 | 复选框 | 唯一运行开关；关闭时不代表主体用户发言或执行动作 |
 | 允许域 | 多选 | 在本机权限上限内进一步收紧可调用的 lark-cli 域，不能扩权 |
 | 个性化规则 | 多行文本 | 交给 AI 的自然语言职责、风格和授权规则 |
@@ -17,25 +36,36 @@
 
 | 字段 | 类型 | 用途 |
 | --- | --- | --- |
-| 群名称 | 文本 | 便于人识别 |
+| 群名称 | 文本 | 可选；便于人识别 |
 | 群ID | 文本 | `oc_` 开头的真实 chat_id |
 | 启用 | 复选框 | 是否启用该群的特殊规则 |
 | 个性化规则 | 多行文本 | 该群特有的职责、语气、承诺或信息边界 |
 
 ## 接入配置
 
-已有 Base 可通过普通 setup 引用：
+已有 Base 可通过普通 setup 引用；三个参数必须同时提供：
 
 ```bash
 feishu-digital-twin setup \
-  --capabilities message,console \
+  --capabilities message \
   --console-base-token <base-token> \
   --console-runtime-table <运行配置表名或ID> \
   --console-group-rules-table <群级规则表名或ID> \
   <其他必需的 setup 选项>
 ```
 
-三个 `--console-*` 选项必须同时提供。setup 自动补齐 `base` 业务域，通过官方 `base +record-list` 只读两张表并确认运行行和表结构可用；它不写入、创建或改造 Base，并将控制模式设为 `base`。选择 Base 后，不允许再用本机 `authority_rules` 或 `group_rules`；知识空间路由也应写入 Base“个性化规则”，避免两个规则源。
+setup 自动补齐 `base` 业务域，通过官方 `base +record-list` 只读两张表并确认运行行和表结构可用；它不写入或改造显式传入的 Base，并将控制模式设为 `base`。选择 Base 后，不允许再用本机 `authority_rules` 或 `group_rules`；知识空间路由也应写入 Base“个性化规则”，避免两个规则源。
+
+没有现成 Base 时无需先打开飞书手工建表：
+
+```bash
+feishu-digital-twin setup \
+  --capabilities message \
+  --create-missing-resources \
+  <其他必需的 setup 选项>
+```
+
+此路径创建的 Base 初始保持关闭，因此成功状态是 `safe-but-disabled`。若企业知识空间也在同一次 setup 中创建或引用，知识路由会直接写入新 Base 的初始“个性化规则”，最终私有配置不保留 `authority_rules`。
 
 高级配置文件中的对应结构为：
 

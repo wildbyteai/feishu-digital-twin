@@ -23,25 +23,25 @@
 | `max_ai_action_rounds` | 限制执行反馈循环 | 产品安全上限 | 普通 | 私有配置 | 无 | 1–3，默认 3 | Schema 与合成测试 | 不出现无界循环 | 超出上限 | 恢复到 1–3 |
 | `production_data_approved` | 记录 Codex 数据处理许可 | 部署者明确确认 | 企业安全 | 私有配置 | 无 | 布尔值，默认 false | `--approve-production-data` | 未确认时生产失败关闭 | 错把登录等同于许可 | 冻结并重新确认真实环境 |
 | `production_enabled` | 旧版本机运行开关 | 旧 v1 配置 | 内部 | 私有配置 | 无 | 仅 v1 兼容读取；v2 禁止 | config/status 兼容测试 | 旧实例可在升级后继续读取 | 与 v2 `control` 混用 | 保持冻结并显式迁移到 v2 |
-| `control` | 选择唯一运行开关与规则来源 | 部署者选择 | 内部 | 私有配置 | 无 | v2 必填：`local` 或 `base`；v1 禁止 | setup/config 校验与 status 读回 | 不出现本机/Base 双开关 | 模式与子字段或规则来源冲突 | 冻结并保留一个权威来源 |
+| `control` | 选择唯一运行开关与规则来源 | 普通 setup 固定生成 Base；高级配置或旧部署可显式使用 local | 内部 | 私有配置 | 无 | v2 必填：`local` 或 `base`；普通新安装固定 `base`，v1 禁止 | setup/config 校验与 status 读回 | 不出现本机/Base 双开关 | 模式与子字段或规则来源冲突 | 冻结并保留一个权威来源 |
 | `supplement_lookback_minutes` | 首次或断点恢复防漏窗口 | 调度策略 | 普通 | 私有配置 | user 消息读取 | 1–1440，默认 5 | 补读合成测试 | 只影响恢复回看，不改变轮询频率 | 误当调度间隔 | 恢复默认并检查 schedule |
-| `console` | 引用飞书 Base 控制台 | 部署者选择已有 Base | 企业资源标识 | 私有配置 | 指定 Base 只读 | 仅 `control.mode=base` 时必填 | 读取两张表及唯一运行行 | 总开关、规则和域可读 | token/表名错误、字段缺失 | 冻结；修复引用或切回 local 模式 |
+| `console` | 引用飞书 Base 控制台 | 部署者选择已有 Base，或普通 setup 自动创建 | 企业资源标识 | 私有配置 | 复用时只读；自动创建时需要 Base/表/记录写入 | 普通新安装必填且使用 `control.mode=base` | 读取两张表及唯一运行行 | 总开关、规则和域可读 | token/表名错误、字段缺失 | 冻结；修复引用；旧部署仍可保留 local 模式 |
 | `principal` | 定义主体用户和称呼 | lark-cli user 身份 | 企业身份 | 私有配置 | user 身份读取 | 必填对象 | setup 身份发现 | open_id 与授权用户一致 | 主体变化 | 新建实例，不能就地换主体 |
 | `schedule` | 定义工作/安静时间与每日任务 | 部署者时区和工作制 | 内部 | 私有配置 | 无 | 必填对象 | Schema、服务计划读回 | 三个后台角色使用同一时区 | 起止时间反转 | 恢复默认计划后重装服务 |
 | `daily_memory` | 指定每日工作记忆目录 | 部署者选择的 Drive 文件夹 | 企业资源标识 | 私有配置 | 目录读写、文档读写 | 可选 | 文件夹访问与写后读回 | 同日唯一文档可验证 | 文件夹失效、只读 | 冻结每日任务并重新选择目录 |
 | `privacy` | 只能缩短保留时间和日志大小 | 部署者隐私策略 | 安全策略 | 私有配置 | 本机文件 | 可选，受硬上限约束 | config 校验与清理测试 | 运行态按期清理 | 配成无限期或过大 | 恢复公共安全默认值 |
-| `allowed_lark_domains` | 设置飞书动作本机上限 | `--capabilities` 或高级 `--domains` | 高敏权限边界 | 私有配置 | 对应官方业务 domain | 目录白名单内的非空唯一列表，默认 `im`；不含 `event` | Schema、Guard 与官方 auth 检查 | Base 只能收紧 | 未知域、保留域、权限缺失 | 删除未授权域并保持冻结 |
-| `group_rules` | 保存少量本机群级规则 | 部署者声明 | 企业规则与群标识 | 私有配置 | 无额外平台权限 | 仅 local 模式可选 | config 校验 | 仅匹配明确 chat_id | Base 模式与本机规则同时存在 | 统一迁入 Base 或保留 local 模式 |
-| `authority_rules` | 保存 AI 自然语言职责和知识路由 | 部署者规则 | 企业规则 | 私有配置 | 规则涉及的能力权限 | 仅 local 模式可选 | prompt 合成测试 | 不突破可信硬门 | Base 模式与本机规则同时存在 | 统一迁入 Base“个性化规则”或保留 local 模式 |
+| `allowed_lark_domains` | 设置飞书动作本机上限 | `--capabilities` 或高级 `--domains` | 高敏权限边界 | 私有配置 | 对应官方业务 domain | 目录白名单内的非空唯一列表；普通新安装至少 `im,base`，不含 `event` | Schema、Guard 与官方 auth 检查 | Base 只能收紧 | 未知域、保留域、权限缺失 | 删除未授权域并保持冻结 |
+| `group_rules` | 保存少量本机群级规则 | 部署者声明 | 企业规则与群标识 | 私有配置 | 无额外平台权限 | 仅高级 local 配置或旧部署可选；普通新安装迁入 Base | config 校验 | 仅匹配明确 chat_id | Base 模式与本机规则同时存在 | 统一迁入 Base；旧部署可暂时保留 local 模式 |
+| `authority_rules` | 保存 AI 自然语言职责和知识路由 | 部署者规则 | 企业规则 | 私有配置 | 规则涉及的能力权限 | 仅高级 local 配置或旧部署可选；普通新安装写入 Base“个性化规则” | prompt 合成测试 | 不突破可信硬门 | Base 模式与本机规则同时存在 | 统一迁入 Base“个性化规则”；旧部署可暂时保留 local 模式 |
 
-新 setup 和公开示例都生成 v2。v1 仅用于读取旧实例，不会被后台静默改写：没有 `console` 时按 local 解释，有 `console` 时按 base 解释，并保留旧 `production_enabled` 与旧规则语义。迁移时应先冻结、停止服务，生成明确的 v2 候选，再使用 `config update` 和 Doctor 验证。
+新普通 setup 和公开示例都生成 v2 Base 模式。v1 仅用于读取旧实例，不会被后台静默改写：没有 `console` 时按 local 解释，有 `console` 时按 base 解释，并保留旧 `production_enabled` 与旧规则语义。v2 local 也继续作为高级配置和旧部署兼容入口，但不再是普通引导式安装的默认结果。迁移时应先冻结、停止服务，生成明确的 v2 候选，再使用 `config update` 和 Doctor 验证。
 
 ## `control` 子字段
 
 | 模式 | 必需内容 | 禁止内容 | 含义 |
 | --- | --- | --- | --- |
-| `local` | `enabled` 布尔值 | `console` | 本机配置是唯一日常开关，可使用本机 `authority_rules` 和 `group_rules` |
-| `base` | `console` | `enabled`、`authority_rules`、`group_rules` | Base 中的总开关和规则是唯一权威来源 |
+| `local` | `enabled` 布尔值 | `console` | 高级配置/旧部署兼容：本机配置是唯一日常开关，可使用本机 `authority_rules` 和 `group_rules` |
+| `base` | `console` | `enabled`、`authority_rules`、`group_rules` | 普通新安装固定模式：Base 中的总开关和规则是唯一权威来源 |
 
 ## `principal` 子字段
 
@@ -68,9 +68,9 @@
 
 | 字段 | 用途和取得位置 | 权限、验证和后置条件 | 错误与回退 |
 | --- | --- | --- | --- |
-| `base_token` | 从明确选择的 Base URL 通过官方 `base +url-resolve` 获得 | user 读取指定 Base；`+base-get` 成功 | 不把 wiki token 或完整 URL当 token；失败时冻结 |
+| `base_token` | 从明确选择的 Base URL 通过官方 `base +url-resolve` 获得，或由 setup 创建后读回 | user 读取指定 Base；自动创建时还需创建权限 | 不把 wiki token 或完整 URL当 token；失败时冻结 |
 | `runtime_table` | 运行配置表的真实名称或 ID | 能列出字段且恰好一条运行记录 | 重名时用真实 table_id 消歧 |
-| `group_rules_table` | 群级规则表的真实名称或 ID | 能列出字段和读取记录 | 表不存在时先修复，不自动新建生产资源 |
+| `group_rules_table` | 群级规则表的真实名称或 ID | 能列出字段和读取记录 | 显式已有 Base 不自动改造；自动创建路径可补齐自身未完成的表 |
 
 ## `daily_memory` 子字段
 
@@ -81,16 +81,20 @@
 | `excluded_chat_ids` | 排除不进入每日记忆的聊天 | 唯一字符串数组 | 不公开或写日志；失效项可删除 |
 | `excluded_topics` | 排除敏感话题或线程 | 可填写稳定 `thread_id`，或明确的 topic/title 文本；唯一字符串数组 | 在消息正文进入 Codex 前确定性过滤；缺少可比较元数据时删除该条并记录 `privacy_metadata_unavailable` |
 
-## 普通 setup 的已有资源选项
+## 普通 setup 的资源选项
 
 | 配置结构 | setup 选项组 | 行为 |
 | --- | --- | --- |
 | `principal.address_names` | `--principal-aliases <称呼1,称呼2>` | 与当前主体名称去重后保存 |
-| `control.mode=base` + `console` | `--console-base-token`、`--console-runtime-table`、`--console-group-rules-table` | 三项必须齐全；保存引用并只读校验两张表，不执行飞书写入 |
-| local `authority_rules` | `--knowledge-space-name`、`--knowledge-space-id`、`--knowledge-direction` | 三项必须齐全；生成“企业知识库…”自然语言规则，不建设代码化路由表 |
+| `control.mode=base` + `console` | `--console-base-token`、`--console-runtime-table`、`--console-group-rules-table` | 三项必须齐全；保存引用并只读校验两张表，不执行飞书写入；不提供时 Base 仍属于缺失强制资源 |
+| Base `个性化规则` 中的知识路由 | `--knowledge-space-name`、`--knowledge-space-id`、`--knowledge-direction` | 仅用于没有现成 Base、同时使用 `--create-missing-resources` 的路径；生成“企业知识库…”规则并写入新 Base 初始记录 |
 | `daily_memory` | `--daily-memory-folder-token`、`--daily-memory-folder-name` | 两项必须齐全；排除列表默认为空 |
 
-任一资源组缺项都在初始化或改动实例前失败关闭。setup 自动合并这些资源所需的官方业务域，并在 Doctor 中只读验真：Base 读取两张表，知识空间使用 `wiki +space-list` 匹配名称和 `space_id`，每日记忆目录使用 `drive files list` 对指定 `folder_token` 发起一页大小为 1 的真实可访问性查询。它不读取正文，也不创建、修改或写入这些资源。上述选项不能与 `--config` 混用。选择控制 Base 后，知识路由必须在 Base“个性化规则”中维护，不能同时传入 `--knowledge-space-*`。返回的 setup/status 摘要不回显 token、space ID、表名、目录名或主体别名。
+任一已有资源组缺项都在初始化或改动实例前失败关闭。setup 自动合并这些资源所需的官方业务域，并在 Doctor 中只读验真：Base 读取两张表，知识空间使用 `wiki +space-list` 匹配名称和 `space_id`，每日记忆目录使用 `drive files list` 对指定 `folder_token` 发起一页大小为 1 的真实可访问性查询。已有资源路径不读取正文，也不修改资源。
+
+普通 setup 无论是否显式选择 `console`，没有控制 Base 时都会返回 `console` 缺失；`enterprise_knowledge` 或 `daily_memory` 没有对应稳定引用时也一并列出。部署者添加 `--create-missing-resources` 后，setup 使用主体 user 身份和确定性默认名称，依次执行官方列表、`--dry-run`、`base +base-create` / `base +table-create` / `base +record-upsert`、`wiki +space-create` / `drive +create-folder`，再列表验证并把稳定引用写入本配置。唯一同名资源会复用；自动创建到一半时重试可补齐缺少的控制表或初始记录；多个同名资源和结构冲突失败关闭。创建成功后若本机 setup 失败，外部资源保留并在重试时复用，不会因本机回滚自动删除。
+
+所有引导资源选项和 `--create-missing-resources` 都不能与 `--config` 混用。自动创建不管理成员、分享范围或权限，只创建所需资源和初始结构。显式选择已有控制 Base 后，知识路由必须在其“个性化规则”中维护，不能同时传入 `--knowledge-space-*`；没有现成 Base 时，知识参数会随新 Base 初始记录写入。返回的 setup/status 摘要只报告资源类型的 `created` / `reused` 状态，不回显 token、space ID、表名、目录名或主体别名。
 
 ## `privacy` 子字段
 

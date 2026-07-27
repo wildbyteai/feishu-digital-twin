@@ -11,11 +11,11 @@
 | 任务 | `task` | user | 启用任务读取；需要创建或更新时再增加写 scope | 创建、更新任务 |
 | 日历 | `calendar` | user | 启用日程读取；需要提醒或建会时再增加写 scope | 邀请参会人、占用时间 |
 | 文档正文 | `docs` | user | 只读取允许访问的文档；需要创建每日记忆时增加文档写入 | 创建或修改文档 |
-| 控制台 Base | `base`、`drive` | user | 读取指定 Base 和表；只有初始化控制台时才使用创建能力 | 配置被修改 |
-| 云空间与每日记忆目录 | `drive` | user | 读取指定文件夹；需要新建目录时才增加写权限 | 创建、移动、删除资源 |
-| 企业知识库 | `wiki`、`drive`、内容对应 domain | user | 列出明确选择的空间，通过 Drive 搜索后按真实类型读取 | 跨空间引用信息 |
+| 控制台 Base | `base`、`drive` | user | 普通完整安装强制启用；复用已有 Base 时只读，自动初始化时增加创建 Base、建表和写入初始记录的能力 | 创建或修改控制资源 |
+| 云空间与每日记忆目录 | `drive` | user | 读取指定文件夹；使用自动创建时增加 `space:folder:create` 或当前 schema 给出的等价写 scope | 创建目录；运行时写每日文档 |
+| 企业知识库 | `wiki`、`drive`、内容对应 domain | user | 列出明确选择的空间；使用自动创建时增加 `wiki:space:write_only` 或当前 schema 给出的等价写 scope | 创建空间；跨空间引用信息 |
 
-新实例默认采用 `bot_only + im`。只有部署者通过 `--capabilities` 选择相应能力，或高级模式用 `--domains` 选择声明式目录内的其他官方业务域后，才增量完成官方授权。`event` 是 `lark-cli event consume` 使用的保留基础设施域，不进入 `allowed_lark_domains`。不要默认使用 `--domain all`，不要申请组织管理、群成员管理或其他无关权限。
+新实例默认采用 `bot_only + im,base`，其中 `base` 只用于强制控制台。只有部署者通过 `--capabilities` 选择其他能力，或高级模式用 `--domains` 选择声明式目录内的其他官方业务域后，才增量完成官方授权。`event` 是 `lark-cli event consume` 使用的保留基础设施域，不进入 `allowed_lark_domains`。不要默认使用 `--domain all`，不要申请组织管理、群成员管理或其他无关权限。
 
 ## 用当前 CLI 生成准确 scope
 
@@ -28,6 +28,30 @@ lark-cli schema <service.resource.method> --format json
 ```
 
 对 user 身份缺少 scope 时，按明确 domain 或错误返回的 `missing_scopes` 增量授权。Bot 缺 scope 时在开发者后台处理，不能用 `auth login` 修复 Bot。
+
+## setup 自动创建资源
+
+只有部署者显式添加 `--create-missing-resources` 时，setup 才会创建缺失资源。它始终使用主体 user 身份，不扩大消息范围，也不修改成员、分享范围或权限：
+
+| 资源 | 官方命令 | 2026-07-26 本机官方 schema 列出的 scope | 身份 |
+| --- | --- | --- | --- |
+| 控制 Base | `base +base-create` | Base 创建权限；当前 shortcut 未进入通用 `schema` 服务目录，以 `--dry-run` 或错误返回的 `missing_scopes` 为准 | 仅 user |
+| 控制表 | `base +table-create` | 指定 Base 的建表权限；以当前 shortcut dry-run/错误为准 | 仅 user |
+| 初始运行记录 | `base +record-upsert` | 指定表的记录写入权限；以当前 shortcut dry-run/错误为准 | 仅 user |
+| 企业知识空间 | `wiki +space-create` | `wiki:space:write_only` 或 `wiki:wiki` | 仅 user |
+| 每日记忆目录 | `drive +create-folder` | `space:folder:create` 或 `drive:drive` | user |
+
+安装时仍应以当前 CLI 为准：
+
+```bash
+lark-cli schema wiki.spaces.create --format json
+lark-cli schema drive.files.create_folder --format json
+lark-cli base +base-create --help
+lark-cli base +table-create --help
+lark-cli base +record-upsert --help
+```
+
+setup 先执行 shortcut 的 `--dry-run`，再创建并只读验证。上述 Base、Wiki 和 Drive shortcut 当前均标记为 `Risk: write`；如果 CLI 返回 exit 10 或 `confirmation_required`，setup 会停止并提示，不会自行追加 `--yes`。缺少 user scope 时，错误返回 `missing_scopes`，只为当前 profile 增量授权后重试，不申请 `all`。自动创建只建立数字分身自己的 Base、两张表和初始记录，不调用角色、成员、高级权限或分享范围接口。
 
 ## 消息范围与事件
 

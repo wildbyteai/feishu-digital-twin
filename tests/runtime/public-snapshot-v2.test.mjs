@@ -1408,6 +1408,75 @@ test("扫描器允许标准系统路径、临时目录、拆分合成标识和�
   );
 });
 
+test("候选元数据不把完整 SHA-256 摘要中的数字片段误判为个人标识", async () => {
+  const phoneLikeDigits = ["138", "0013", "8000"].join("");
+  const idLikeDigits = ["110105", "19491231", "0021"].join("");
+  const phoneDigest = `${"a".repeat(20)}${phoneLikeDigits}${"b".repeat(33)}`;
+  const idDigest = `${"a".repeat(15)}${idLikeDigits}${"b".repeat(31)}`;
+  const report = await scanPublicBuffers({
+    files: [
+      {
+        path: "SHA256SUMS",
+        content: Buffer.from(`${phoneDigest}  tree/README.md\n`)
+      },
+      {
+        path: "provenance.intoto.jsonl",
+        content: Buffer.from(`${JSON.stringify({ digest: idDigest })}\n`)
+      },
+      {
+        path: "sbom.spdx.json",
+        content: Buffer.from(`${JSON.stringify({ checksum: phoneDigest })}\n`)
+      },
+      {
+        path: "snapshot-manifest.json",
+        content: Buffer.from(`${JSON.stringify({ sha256: idDigest })}\n`)
+      }
+    ],
+    policy: {
+      schema_version: 1,
+      forbidden_literals: ["fixture-private-identity"],
+      private_domains: []
+    },
+    stage: "candidate-metadata"
+  });
+
+  assert.deepEqual(report.findings, []);
+});
+
+test("SHA-256 元数据例外不放宽其他阶段、边界长度或独立个人标识", async () => {
+  const phoneLikeDigits = ["138", "0013", "8000"].join("");
+  const idLikeDigits = ["110105", "19491231", "0021"].join("");
+  const exactDigest = `${"a".repeat(20)}${phoneLikeDigits}${"b".repeat(33)}`;
+  const shortDigest = `${"a".repeat(19)}${phoneLikeDigits}${"b".repeat(33)}`;
+  const longDigest = `${"a".repeat(21)}${phoneLikeDigits}${"b".repeat(33)}`;
+  const policy = {
+    schema_version: 1,
+    forbidden_literals: ["fixture-private-identity"],
+    private_domains: []
+  };
+  const scanOne = async ({ path: relativePath, content, stage = "candidate-metadata" }) => (
+    scanPublicBuffers({
+      files: [{ path: relativePath, content: Buffer.from(content) }],
+      policy,
+      stage
+    })
+  );
+  const assertFinding = async (fixture, expectedCode) => {
+    const report = await scanOne(fixture);
+    assert.deepEqual(report.findings.map((finding) => finding.code), [expectedCode]);
+  };
+
+  await assertFinding({ path: "SHA256SUMS", content: shortDigest }, "phone-number");
+  await assertFinding({ path: "SHA256SUMS", content: longDigest }, "phone-number");
+  await assertFinding({ path: "SHA256SUMS", content: phoneLikeDigits }, "phone-number");
+  await assertFinding({ path: "SHA256SUMS", content: idLikeDigits }, "chinese-id-number");
+  await assertFinding({ path: "src/digest.txt", content: exactDigest }, "phone-number");
+  await assertFinding(
+    { path: "SHA256SUMS", content: exactDigest, stage: "source-selection" },
+    "phone-number"
+  );
+});
+
 test("扫描器允许合法源码正则字面量通过自身检查", async () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "public-snapshot-regex-fixture-"));
   writeFileSync(

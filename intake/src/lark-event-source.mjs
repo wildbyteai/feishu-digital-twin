@@ -1,5 +1,4 @@
 const MESSAGE_EVENT = "im.message.receive_v1";
-const CARD_EVENT = "card.action.trigger";
 
 function requireText(value, name) {
   if (typeof value !== "string" || value.length === 0) {
@@ -23,10 +22,6 @@ function buildEventCommand({ larkBin = "lark-cli", profile, eventKey }) {
 
 export function buildOfficialEventCommand(options) {
   return buildEventCommand({ ...options, eventKey: MESSAGE_EVENT });
-}
-
-export function buildOfficialCardEventCommand(options) {
-  return buildEventCommand({ ...options, eventKey: CARD_EVENT });
 }
 
 export function officialEventToRawMessage(event, chatMetadata) {

@@ -33,6 +33,8 @@ import {
   validateInstanceConfig
 } from "../../runtime/src/config-loader.mjs";
 import {
+  BASE_CONSOLE_DEFAULT_REFRESH_SECONDS,
+  BASE_CONSOLE_SETUP_SCHEMA,
   loadBaseConsole,
   loadBaseRuntimeSwitch
 } from "../../runtime/src/base-console.mjs";
@@ -79,7 +81,8 @@ const FLAG_OPTIONS = new Set([
   "--restart",
   "--purge",
   "--approve-production-data",
-  "--approve-message-scope"
+  "--approve-message-scope",
+  "--create-missing-resources"
 ]);
 const PACKAGE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;
 const MESSAGE_SCOPE_RANK = Object.freeze({
@@ -87,6 +90,56 @@ const MESSAGE_SCOPE_RANK = Object.freeze({
   internal_visible: 1,
   all_visible: 2
 });
+const CONTROL_BASE_TABLE_NAMES = Object.freeze({
+  runtime: "运行配置",
+  groupRules: "群级规则"
+});
+const CONTROL_BASE_FIELD_DEFINITIONS = Object.freeze({
+  runtime: Object.freeze([
+    Object.freeze({ name: "名称", type: "text" }),
+    Object.freeze({ name: "数字分身启用", type: "checkbox" }),
+    Object.freeze({
+      name: "允许域",
+      type: "select",
+      multiple: true,
+      options: Object.freeze([Object.freeze({ name: "继承" })])
+    }),
+    Object.freeze({ name: "个性化规则", type: "text" })
+  ]),
+  groupRules: Object.freeze([
+    Object.freeze({ name: "群名称", type: "text" }),
+    Object.freeze({ name: "群ID", type: "text" }),
+    Object.freeze({ name: "启用", type: "checkbox" }),
+    Object.freeze({ name: "个性化规则", type: "text" })
+  ])
+});
+
+function controlBaseSetupGuide() {
+  const schema = structuredClone(BASE_CONSOLE_SETUP_SCHEMA);
+  const masterSwitch = schema.runtime_table.fields.find(
+    ({ role }) => role === "daily_master_switch"
+  );
+  return {
+    daily_master_switch: {
+      field: masterSwitch.name,
+      first_install_value: masterSwitch.initial_value,
+      enabled_value: true,
+      refresh_seconds: BASE_CONSOLE_DEFAULT_REFRESH_SECONDS
+    },
+    ...schema,
+    setup_options: [
+      "--console-base-token",
+      "--console-runtime-table",
+      "--console-group-rules-table"
+    ],
+    automatic_base_creation: true,
+    after_setup: "run status; if readiness is safe-but-disabled, check 数字分身启用, wait up to 10 seconds, and run status again until readiness is ready",
+    documentation: [
+      "docs/feishu-console.md",
+      "docs/getting-started/global-configuration.md"
+    ]
+  };
+}
 
 export const HELP = `feishu-digital-twin <command>
 
@@ -130,8 +183,33 @@ Global options:
   --knowledge-direction TEXT        business direction for the knowledge space
   --daily-memory-folder-token TOKEN existing daily-memory Drive folder token
   --daily-memory-folder-name NAME   existing daily-memory Drive folder name
+  --create-missing-resources        create missing Base/Wiki/Drive resources with official lark-cli
   --approve-production-data         approve the configured Codex environment for business data
   --approve-message-scope           approve a new or broader non-bot-only message scope
+
+Base control console first setup:
+  Base control is required for a complete guided setup.
+  Provide an existing Base, or use --create-missing-resources to create it safely.
+  Recommended template; display-only fields are explicitly marked optional.
+  运行配置 (exactly one row):
+    名称=text("默认配置")             optional display label
+    数字分身启用=checkbox(false)    the only day-to-day master switch
+    允许域=multi-select("继承")     inherit the local capability ceiling
+    个性化规则=multiline text       required field; its value may be empty
+  群级规则 (zero or more rows):
+    群名称=text(optional), 群ID=text, 启用=checkbox, 个性化规则=multiline text
+  生产执行 remains a legacy alias for existing deployments; new setups use 数字分身启用.
+  First install: keep 数字分身启用 unchecked, run setup and status, then check it.
+  A Base change is visible within about 10 seconds; run status until readiness=ready.
+
+Deployment-only confirmations, not daily switches:
+  --approve-production-data         one-time deployment approval for business-data processing
+  --approve-message-scope           required for initial or broader message visibility
+  --create-missing-resources        explicit Base/Wiki/Drive creation through official lark-cli
+
+Details:
+  docs/feishu-console.md
+  docs/getting-started/global-configuration.md
 `;
 
 const GUIDED_RESOURCE_OPTION_GROUPS = Object.freeze({
@@ -152,6 +230,7 @@ const GUIDED_RESOURCE_OPTION_GROUPS = Object.freeze({
 });
 const GUIDED_RESOURCE_OPTIONS = Object.freeze([
   "principal_aliases",
+  "create_missing_resources",
   ...Object.values(GUIDED_RESOURCE_OPTION_GROUPS).flat()
 ]);
 
@@ -334,13 +413,15 @@ function validateGuidedResourceOptions(options) {
   for (const [group, names] of Object.entries(GUIDED_RESOURCE_OPTION_GROUPS)) {
     const present = presentOptionNames(options, names);
     if (present.length > 0 && present.length !== names.length) {
+      const details = {
+        resource_group: group,
+        missing_options: names.filter((name) => !present.includes(name)).map(optionLabel)
+      };
+      if (group === "console") details.setup_guide = controlBaseSetupGuide();
       throw new ProductError(
         "INCOMPLETE_GUIDED_RESOURCE_GROUP",
         "guided resource options must be supplied as a complete group",
-        {
-          resource_group: group,
-          missing_options: names.filter((name) => !present.includes(name)).map(optionLabel)
-        }
+        details
       );
     }
   }
@@ -373,12 +454,20 @@ function guidedPrincipalAliases(value) {
   return aliases;
 }
 
-function enterpriseKnowledgeRule(options) {
+function enterpriseKnowledgeRuleFromReference({ name, spaceId, direction }) {
   return [
-    `企业知识库：${requiredOptionText(options.knowledge_space_name, "--knowledge-space-name")}`,
-    `space_id=${requiredOptionText(options.knowledge_space_id, "--knowledge-space-id")}`,
-    `适用于${requiredOptionText(options.knowledge_direction, "--knowledge-direction")}`
+    `企业知识库：${name}`,
+    `space_id=${spaceId}`,
+    `适用于${direction}`
   ].join("；");
+}
+
+function enterpriseKnowledgeRule(options) {
+  return enterpriseKnowledgeRuleFromReference({
+    name: requiredOptionText(options.knowledge_space_name, "--knowledge-space-name"),
+    spaceId: requiredOptionText(options.knowledge_space_id, "--knowledge-space-id"),
+    direction: requiredOptionText(options.knowledge_direction, "--knowledge-direction")
+  });
 }
 
 function addGuidedCapabilityDomains(candidate, capability) {
@@ -492,7 +581,7 @@ function guidedDomains(value) {
   return domains;
 }
 
-function guidedCapabilities(value) {
+function guidedCapabilityNames(value) {
   const capabilities = value.split(",").map((item) => item.trim()).filter(Boolean);
   if (capabilities.length === 0 || new Set(capabilities).size !== capabilities.length) {
     throw new ProductError(
@@ -510,13 +599,54 @@ function guidedCapabilities(value) {
       { unknown_capabilities: unknownCapabilities }
     );
   }
-  return larkDomainsForCapabilities(capabilities);
+  return capabilities;
+}
+
+function guidedCapabilities(value) {
+  return larkDomainsForCapabilities(guidedCapabilityNames(value));
 }
 
 function guidedAllowedDomains(options) {
-  return options.capabilities === undefined
+  const domains = options.capabilities === undefined
     ? guidedDomains(options.domains)
     : guidedCapabilities(options.capabilities);
+  return [...new Set([...domains, "base"])];
+}
+
+function missingGuidedResources(candidate, options) {
+  const capabilities = options.capabilities === undefined
+    ? new Set()
+    : new Set(guidedCapabilityNames(options.capabilities));
+  const missing = [];
+  if (
+    capabilities.has("enterprise_knowledge") &&
+    candidate.control?.mode !== "base" &&
+    knowledgeReferences(candidate).length === 0
+  ) {
+    missing.push("enterprise_knowledge");
+  }
+  if (capabilities.has("daily_memory") && !candidate.daily_memory) {
+    missing.push("daily_memory");
+  }
+  if (!candidate.console) missing.push("console");
+  return missing;
+}
+
+function requireGuidedResourceSelection(candidate, options) {
+  const missing = missingGuidedResources(candidate, options);
+  if (missing.length === 0 || options.create_missing_resources === true) return missing;
+  throw new ProductError(
+    "GUIDED_RESOURCE_SELECTION_REQUIRED",
+    "provide the listed existing resources, or rerun with --create-missing-resources to let setup create them with official lark-cli",
+    {
+      missing_resources: missing,
+      existing_resource_options: Object.fromEntries(missing.map((resource) => [
+        resource,
+        GUIDED_RESOURCE_OPTION_GROUPS[resource].map(optionLabel)
+      ])),
+      automatic_creation_option: "--create-missing-resources"
+    }
+  );
 }
 
 function requireMessageScopeApproval(candidate, current, options) {
@@ -830,7 +960,7 @@ function larkAuthDoctor(binary, profile, environment) {
   };
 }
 
-function runLarkReadCommand(argv, environment) {
+function runLarkCommand(argv, environment) {
   const result = spawnSync(argv[0], argv.slice(1), {
     encoding: "utf8",
     timeout: 30_000,
@@ -844,18 +974,30 @@ function runLarkReadCommand(argv, environment) {
   };
 }
 
-function larkJson(binary, profile, args, environment) {
-  const result = runLarkReadCommand([binary, "--profile", profile, ...args], environment);
-  if (result.exit_code !== 0) return null;
+function parseJsonObject(value) {
   try {
-    const envelope = JSON.parse(result.stdout.trim());
-    return envelope && typeof envelope === "object" && !Array.isArray(envelope) &&
-      envelope.ok !== false
-      ? envelope
+    const parsed = JSON.parse(value.trim());
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed
       : null;
   } catch {
     return null;
   }
+}
+
+function runLarkJsonCommand(binary, profile, args, environment) {
+  const result = runLarkCommand([binary, "--profile", profile, ...args], environment);
+  return {
+    ...result,
+    envelope: parseJsonObject(result.exit_code === 0 ? result.stdout : result.stderr)
+  };
+}
+
+function larkJson(binary, profile, args, environment) {
+  const result = runLarkJsonCommand(binary, profile, args, environment);
+  return result.exit_code === 0 && result.envelope?.ok !== false
+    ? result.envelope
+    : null;
 }
 
 function nestedObjects(value, result = []) {
@@ -876,6 +1018,1062 @@ function objectText(value, fields) {
     }
   }
   return null;
+}
+
+function nestedArrayField(value, fields) {
+  for (const candidate of nestedObjects(value)) {
+    for (const field of fields) {
+      if (Array.isArray(candidate[field])) return candidate[field];
+    }
+  }
+  return null;
+}
+
+function larkResourceFailureDetails(result, resourceType, stage) {
+  const upstream = result.envelope?.error;
+  return {
+    resource_type: resourceType,
+    stage,
+    ...(Array.isArray(upstream?.missing_scopes) && upstream.missing_scopes.length > 0
+      ? { missing_scopes: upstream.missing_scopes }
+      : {}),
+    ...(upstream?.subtype === "missing_scope" ? { authorization_required: true } : {})
+  };
+}
+
+function requireLarkResourceResult(result, {
+  code,
+  message,
+  resourceType,
+  stage
+}) {
+  if (result.exit_code === 10) {
+    throw new ProductError(
+      "LARK_RESOURCE_CONFIRMATION_REQUIRED",
+      "official lark-cli requested an additional confirmation; setup did not add --yes automatically",
+      { resource_type: resourceType, stage }
+    );
+  }
+  if (result.exit_code !== 0 || result.envelope === null || result.envelope.ok === false) {
+    throw new ProductError(
+      code,
+      message,
+      larkResourceFailureDetails(result, resourceType, stage)
+    );
+  }
+  return result.envelope;
+}
+
+function exactWikiSpaces(envelope, name) {
+  const items = nestedArrayField(envelope, ["items", "spaces"]);
+  if (items === null) return null;
+  const matches = items.flatMap((item) => nestedObjects(item)).map((item) => ({
+    id: objectText(item, ["space_id", "spaceId", "id"]),
+    name: objectText(item, ["name", "space_name", "spaceName", "title"])
+  })).filter((item) => item.id && item.name === name);
+  return matches.filter((item, index) =>
+    matches.findIndex((candidate) => candidate.id === item.id) === index
+  );
+}
+
+function exactRootFolders(envelope, name) {
+  const files = nestedArrayField(envelope, ["files"]);
+  if (files === null) return null;
+  const matches = files.flatMap((item) => nestedObjects(item)).map((item) => ({
+    token: objectText(item, ["token", "folder_token", "folderToken", "file_token", "id"]),
+    name: objectText(item, ["name", "title"]),
+    type: objectText(item, ["type", "file_type", "fileType"])
+  })).filter((item) => item.token && item.name === name && item.type?.toLowerCase() === "folder");
+  return matches.filter((item, index) =>
+    matches.findIndex((candidate) => candidate.token === item.token) === index
+  );
+}
+
+function driveRootPage(envelope) {
+  const page = nestedObjects(envelope).find((candidate) => Array.isArray(candidate.files));
+  if (!page) return null;
+  return {
+    files: page.files,
+    hasMore: page.has_more === true || page.hasMore === true,
+    nextPageToken: objectText(page, [
+      "next_page_token",
+      "nextPageToken",
+      "page_token",
+      "pageToken"
+    ])
+  };
+}
+
+function requireSingleResourceMatch(matches, resourceType) {
+  if (matches === null) {
+    throw new ProductError(
+      "LARK_RESOURCE_DISCOVERY_FAILED",
+      "official lark-cli returned an unsupported resource list",
+      { resource_type: resourceType, stage: "discover" }
+    );
+  }
+  if (matches.length > 1) {
+    throw new ProductError(
+      "LARK_RESOURCE_AMBIGUOUS",
+      "multiple resources have the deterministic setup name; provide an explicit stable ID or token",
+      {
+        resource_type: resourceType,
+        match_count: matches.length,
+        existing_resource_options: GUIDED_RESOURCE_OPTION_GROUPS[resourceType].map(optionLabel)
+      }
+    );
+  }
+  return matches[0] ?? null;
+}
+
+function listKnowledgeSpaces(candidate, environment) {
+  const result = runLarkJsonCommand(candidate.lark_cli_bin, candidate.profile, [
+    "wiki", "+space-list",
+    "--as", "user",
+    "--page-all",
+    "--page-limit", "0",
+    "--format", "json"
+  ], environment);
+  return requireLarkResourceResult(result, {
+    code: "LARK_RESOURCE_DISCOVERY_FAILED",
+    message: "the selected profile could not list its Wiki spaces",
+    resourceType: "enterprise_knowledge",
+    stage: "discover"
+  });
+}
+
+function listRootDriveFolders(candidate, environment) {
+  const files = [];
+  const seenPageTokens = new Set();
+  let pageToken = null;
+  while (true) {
+    const params = {
+      folder_token: "",
+      page_size: 200,
+      ...(pageToken === null ? {} : { page_token: pageToken })
+    };
+    const result = runLarkJsonCommand(candidate.lark_cli_bin, candidate.profile, [
+      "drive", "files", "list",
+      "--params", JSON.stringify(params),
+      "--as", "user",
+      "--format", "json"
+    ], environment);
+    const envelope = requireLarkResourceResult(result, {
+      code: "LARK_RESOURCE_DISCOVERY_FAILED",
+      message: "the selected profile could not list its Drive root",
+      resourceType: "daily_memory",
+      stage: "discover"
+    });
+    const page = driveRootPage(envelope);
+    if (!page) {
+      throw new ProductError(
+        "LARK_RESOURCE_DISCOVERY_FAILED",
+        "official lark-cli returned an unsupported Drive root page",
+        { resource_type: "daily_memory", stage: "discover" }
+      );
+    }
+    files.push(...page.files);
+    if (!page.hasMore) return { ok: true, data: { files, has_more: false } };
+    if (!page.nextPageToken || seenPageTokens.has(page.nextPageToken)) {
+      throw new ProductError(
+        "LARK_RESOURCE_DISCOVERY_FAILED",
+        "official lark-cli returned an invalid Drive pagination cursor",
+        { resource_type: "daily_memory", stage: "discover" }
+      );
+    }
+    seenPageTokens.add(page.nextPageToken);
+    pageToken = page.nextPageToken;
+  }
+}
+
+function runLarkResourceWrite(candidate, args, environment, resourceType, stage) {
+  const result = runLarkJsonCommand(
+    candidate.lark_cli_bin,
+    candidate.profile,
+    args,
+    environment
+  );
+  return requireLarkResourceResult(result, {
+    code: "LARK_RESOURCE_CREATION_FAILED",
+    message: "official lark-cli could not create the requested resource",
+    resourceType,
+    stage
+  });
+}
+
+function creationFailureIsDefinitive(error) {
+  return error instanceof ProductError && (
+    error.code === "LARK_RESOURCE_CONFIRMATION_REQUIRED" ||
+    error.details?.authorization_required === true
+  );
+}
+
+function resolveResourceAfterUncertainCreate({
+  discover,
+  exactMatches,
+  name,
+  resourceType
+}) {
+  let matches;
+  try {
+    matches = exactMatches(discover(), name);
+  } catch {
+    throw new ProductError(
+      "LARK_RESOURCE_CREATION_OUTCOME_UNKNOWN",
+      "the create command result was uncertain and the resource could not be read back",
+      {
+        resource_type: resourceType,
+        stage: "recover",
+        created_resources_may_be_retained: [resourceType],
+        retry_safe: false
+      }
+    );
+  }
+  if (matches === null) {
+    throw new ProductError(
+      "LARK_RESOURCE_CREATION_OUTCOME_UNKNOWN",
+      "the create command result was uncertain and official lark-cli returned an unsupported resource list",
+      {
+        resource_type: resourceType,
+        stage: "recover",
+        created_resources_may_be_retained: [resourceType],
+        retry_safe: false
+      }
+    );
+  }
+  if (matches.length > 1) {
+    throw new ProductError(
+      "LARK_RESOURCE_AMBIGUOUS",
+      "multiple resources have the deterministic setup name after an uncertain create result",
+      {
+        resource_type: resourceType,
+        match_count: matches.length,
+        existing_resource_options: GUIDED_RESOURCE_OPTION_GROUPS[resourceType].map(optionLabel),
+        created_resources_may_be_retained: [resourceType],
+        retry_safe: false
+      }
+    );
+  }
+  if (matches.length === 0) {
+    throw new ProductError(
+      "LARK_RESOURCE_CREATION_OUTCOME_UNKNOWN",
+      "the create command result was uncertain and the resource was not yet visible during read-back",
+      {
+        resource_type: resourceType,
+        stage: "recover",
+        created_resources_may_be_retained: [resourceType],
+        retry_safe: false
+      }
+    );
+  }
+  return matches[0];
+}
+
+function createLarkResourceWithReadback(candidate, createArgs, environment, {
+  resourceType,
+  discover,
+  exactMatches,
+  name
+}) {
+  try {
+    runLarkResourceWrite(candidate, createArgs, environment, resourceType, "create");
+    return null;
+  } catch (error) {
+    if (creationFailureIsDefinitive(error)) throw error;
+    return resolveResourceAfterUncertainCreate({
+      discover,
+      exactMatches,
+      name,
+      resourceType
+    });
+  }
+}
+
+function verifyCreatedLarkResource({
+  discover,
+  exactMatches,
+  name,
+  resourceType,
+  missingMessage
+}) {
+  let match;
+  try {
+    match = requireSingleResourceMatch(exactMatches(discover(), name), resourceType);
+  } catch (error) {
+    const details = error instanceof ProductError && error.details &&
+      typeof error.details === "object" && !Array.isArray(error.details)
+      ? error.details
+      : {};
+    throw new ProductError(
+      error instanceof ProductError ? error.code : "LARK_RESOURCE_CREATION_UNVERIFIED",
+      error instanceof ProductError ? error.message : missingMessage,
+      {
+        ...details,
+        resource_type: resourceType,
+        stage: "verify",
+        created_resources_may_be_retained: [resourceType],
+        retry_safe: false
+      }
+    );
+  }
+  if (!match) {
+    throw new ProductError(
+      "LARK_RESOURCE_CREATION_UNVERIFIED",
+      missingMessage,
+      {
+        resource_type: resourceType,
+        stage: "verify",
+        created_resources_may_be_retained: [resourceType],
+        retry_safe: false
+      }
+    );
+  }
+  return match;
+}
+
+function controlBaseSearchTitle(name) {
+  return [...name].slice(0, 30).join("");
+}
+
+function exactControlBases(envelope, name) {
+  const matches = nestedObjects(envelope).map((item) => ({
+    token: objectText(item, [
+      "app_token",
+      "appToken",
+      "base_token",
+      "baseToken",
+      "token",
+      "obj_token",
+      "id"
+    ]),
+    name: objectText(item, ["name", "title", "base_name", "baseName"])
+  })).filter((item) => item.token && item.name === name);
+  return matches.filter((item, index) =>
+    matches.findIndex((candidate) => candidate.token === item.token) === index
+  );
+}
+
+function listControlBases(candidate, environment, name) {
+  const result = runLarkJsonCommand(candidate.lark_cli_bin, candidate.profile, [
+    "base", "+title-resolve",
+    "--title", controlBaseSearchTitle(name),
+    "--as", "user",
+    "--format", "json"
+  ], environment);
+  return requireLarkResourceResult(result, {
+    code: "LARK_RESOURCE_DISCOVERY_FAILED",
+    message: "the selected profile could not resolve its control Base",
+    resourceType: "console",
+    stage: "discover"
+  });
+}
+
+function exactControlBaseTables(envelope, name) {
+  const matches = nestedObjects(envelope).map((item) => ({
+    id: objectText(item, ["table_id", "tableId", "id"]),
+    name: objectText(item, ["table_name", "tableName", "name"])
+  })).filter((item) => item.id && item.name === name);
+  return matches.filter((item, index) =>
+    matches.findIndex((candidate) => candidate.id === item.id) === index
+  );
+}
+
+function listControlBaseTables(candidate, environment, baseToken) {
+  const result = runLarkJsonCommand(candidate.lark_cli_bin, candidate.profile, [
+    "base", "+table-list",
+    "--base-token", baseToken,
+    "--limit", "100",
+    "--as", "user",
+    "--format", "json"
+  ], environment);
+  return requireLarkResourceResult(result, {
+    code: "LARK_RESOURCE_DISCOVERY_FAILED",
+    message: "the selected profile could not list control Base tables",
+    resourceType: "console",
+    stage: "discover"
+  });
+}
+
+function controlBaseFields(envelope) {
+  const items = nestedArrayField(envelope, ["items", "fields"]);
+  if (items === null) return null;
+  return items.flatMap((item) => nestedObjects(item)).map((item) => ({
+    name: objectText(item, ["field_name", "fieldName", "name"]),
+    type: objectText(item, ["type", "field_type", "fieldType"]),
+    multiple: item.multiple,
+    options: Array.isArray(item.options)
+      ? item.options.map((option) => objectText(option, ["name"])).filter(Boolean)
+      : []
+  })).filter((item) => item.name && item.type);
+}
+
+function listControlBaseFields(candidate, environment, baseToken, tableId) {
+  const result = runLarkJsonCommand(candidate.lark_cli_bin, candidate.profile, [
+    "base", "+field-list",
+    "--base-token", baseToken,
+    "--table-id", tableId,
+    "--limit", "200",
+    "--as", "user",
+    "--format", "json"
+  ], environment);
+  const envelope = requireLarkResourceResult(result, {
+    code: "LARK_RESOURCE_DISCOVERY_FAILED",
+    message: "the selected profile could not read control Base fields",
+    resourceType: "console",
+    stage: "verify"
+  });
+  const fields = controlBaseFields(envelope);
+  if (fields === null) {
+    throw new ProductError(
+      "LARK_BASE_CONSOLE_SCHEMA_CONFLICT",
+      "official lark-cli returned an unsupported control Base field list",
+      { resource_type: "console", stage: "verify" }
+    );
+  }
+  return fields;
+}
+
+function requireControlBaseSchema(fields, expected, tableRole) {
+  const byName = new Map(fields.map((field) => [field.name, field]));
+  const invalid = [];
+  for (const definition of expected) {
+    const field = byName.get(definition.name);
+    if (!field) {
+      invalid.push({ field: definition.name, issue: "missing" });
+      continue;
+    }
+    if (field.type !== definition.type) {
+      invalid.push({ field: definition.name, issue: "type" });
+      continue;
+    }
+    if (definition.multiple === true && field.multiple !== true) {
+      invalid.push({ field: definition.name, issue: "multiple" });
+    }
+    if (
+      Array.isArray(definition.options) &&
+      definition.options.some(({ name }) => !field.options.includes(name))
+    ) {
+      invalid.push({ field: definition.name, issue: "options" });
+    }
+  }
+  if (invalid.length > 0) {
+    throw new ProductError(
+      "LARK_BASE_CONSOLE_SCHEMA_CONFLICT",
+      "an existing control Base table conflicts with the required setup schema",
+      {
+        resource_type: "console",
+        stage: "verify",
+        table_role: tableRole,
+        invalid_fields: invalid
+      }
+    );
+  }
+}
+
+function controlBaseRecordSnapshot(envelope) {
+  const matrix = nestedObjects(envelope).find((item) =>
+    Array.isArray(item.fields) && Array.isArray(item.data)
+  );
+  if (matrix) {
+    return {
+      fields: matrix.fields,
+      rows: matrix.data.map((row) => Array.isArray(row) ? row : [])
+    };
+  }
+  const records = nestedArrayField(envelope, ["records", "items"]);
+  if (records === null) return null;
+  const fieldNames = [...new Set(records.flatMap((record) =>
+    record?.fields && typeof record.fields === "object" && !Array.isArray(record.fields)
+      ? Object.keys(record.fields)
+      : []
+  ))];
+  return {
+    fields: fieldNames,
+    rows: records.map((record) => fieldNames.map((field) => record?.fields?.[field]))
+  };
+}
+
+function controlBaseRecordHasMore(envelope) {
+  for (const item of nestedObjects(envelope)) {
+    for (const field of ["has_more", "hasMore"]) {
+      if (typeof item[field] === "boolean") return item[field];
+    }
+  }
+  return null;
+}
+
+function listControlBaseRecords(candidate, environment, baseToken, tableId) {
+  const pageSize = 200;
+  const maximumPages = 1_000;
+  const rows = [];
+  let fields = null;
+  let offset = 0;
+  for (let page = 0; page < maximumPages; page += 1) {
+    const result = runLarkJsonCommand(candidate.lark_cli_bin, candidate.profile, [
+      "base", "+record-list",
+      "--base-token", baseToken,
+      "--table-id", tableId,
+      "--offset", String(offset),
+      "--limit", String(pageSize),
+      "--as", "user",
+      "--format", "json"
+    ], environment);
+    const envelope = requireLarkResourceResult(result, {
+      code: "LARK_RESOURCE_DISCOVERY_FAILED",
+      message: "the selected profile could not read control Base records",
+      resourceType: "console",
+      stage: "verify"
+    });
+    const snapshot = controlBaseRecordSnapshot(envelope);
+    if (snapshot === null) {
+      throw new ProductError(
+        "LARK_BASE_CONSOLE_SCHEMA_CONFLICT",
+        "official lark-cli returned an unsupported control Base record list",
+        { resource_type: "console", stage: "verify" }
+      );
+    }
+    if (fields === null) {
+      fields = snapshot.fields;
+    } else if (
+      fields.length !== snapshot.fields.length ||
+      fields.some((field, index) => field !== snapshot.fields[index])
+    ) {
+      throw new ProductError(
+        "LARK_BASE_CONSOLE_SCHEMA_CONFLICT",
+        "control Base record pages returned inconsistent fields",
+        { resource_type: "console", stage: "verify" }
+      );
+    }
+    rows.push(...snapshot.rows);
+    const explicitHasMore = controlBaseRecordHasMore(envelope);
+    const hasMore = explicitHasMore ?? snapshot.rows.length === pageSize;
+    if (!hasMore) return { fields: fields ?? [], rows };
+    if (snapshot.rows.length === 0) {
+      throw new ProductError(
+        "LARK_RESOURCE_DISCOVERY_FAILED",
+        "official lark-cli returned an invalid control Base pagination page",
+        { resource_type: "console", stage: "verify" }
+      );
+    }
+    offset += snapshot.rows.length;
+  }
+  throw new ProductError(
+    "LARK_RESOURCE_DISCOVERY_FAILED",
+    "control Base record pagination exceeded the supported safety limit",
+    { resource_type: "console", stage: "verify" }
+  );
+}
+
+function snapshotField(snapshot, row, fieldName) {
+  const index = snapshot.fields.indexOf(fieldName);
+  return index < 0 ? undefined : snapshot.rows[row]?.[index];
+}
+
+function normalizedControlBaseCell(value) {
+  if (!Array.isArray(value)) return value;
+  return value.map((item) => {
+    if (typeof item === "string") return item;
+    if (!item || typeof item !== "object") return undefined;
+    return item.text ?? item.name ?? item.value;
+  });
+}
+
+function controlBaseCellMatches(actual, expected) {
+  const normalized = normalizedControlBaseCell(actual);
+  if (Array.isArray(expected)) {
+    return Array.isArray(normalized) &&
+      normalized.length === expected.length &&
+      normalized.every((value, index) => value === expected[index]);
+  }
+  if (typeof expected === "string" && Array.isArray(normalized)) {
+    return normalized.every((value) => typeof value === "string") &&
+      normalized.join("\n") === expected;
+  }
+  return normalized === expected;
+}
+
+function snapshotContainsControlBaseRecord(snapshot, values) {
+  return snapshot.rows.some((_, row) => Object.entries(values).every(
+    ([field, expected]) => controlBaseCellMatches(
+      snapshotField(snapshot, row, field),
+      expected
+    )
+  ));
+}
+
+function groupRuleVerificationError({ afterWrite }) {
+  return new ProductError(
+    afterWrite ? "LARK_RESOURCE_CREATION_UNVERIFIED" : "BASE_RULE_SOURCE_CONFLICT",
+    afterWrite
+      ? "the control Base group rule write could not be read back exactly"
+      : "existing local and Base group rules cannot be merged automatically",
+    {
+      resource_type: "console",
+      stage: "verify",
+      ...(afterWrite
+        ? {
+            created_resources_may_be_retained: ["console"],
+            retry_safe: false
+          }
+        : {})
+    }
+  );
+}
+
+function verifiedMigratedGroupIds(snapshot, groupRules, {
+  afterWrite = false,
+  requireComplete = false
+} = {}) {
+  const expectedById = new Map(groupRules.map((groupRule) => [
+    groupRule.chat_id,
+    groupRule
+  ]));
+  const migrated = new Set();
+  for (let row = 0; row < snapshot.rows.length; row += 1) {
+    const chatId = snapshotField(snapshot, row, "群ID");
+    const expected = expectedById.get(chatId);
+    if (
+      expected === undefined ||
+      migrated.has(chatId) ||
+      !controlBaseCellMatches(snapshotField(snapshot, row, "启用"), true) ||
+      !controlBaseCellMatches(
+        snapshotField(snapshot, row, "个性化规则"),
+        expected.rules.join("\n")
+      )
+    ) {
+      throw groupRuleVerificationError({ afterWrite });
+    }
+    migrated.add(chatId);
+  }
+  if (
+    requireComplete &&
+    (snapshot.rows.length !== groupRules.length || migrated.size !== groupRules.length)
+  ) {
+    throw groupRuleVerificationError({ afterWrite });
+  }
+  return migrated;
+}
+
+function markPossiblyRetained(error, retainedResources, resourceType) {
+  if (
+    error instanceof ProductError &&
+    Array.isArray(error.details?.created_resources_may_be_retained) &&
+    error.details.created_resources_may_be_retained.includes(resourceType)
+  ) {
+    retainedResources.push(resourceType);
+  }
+}
+
+function ensureControlBaseTable(candidate, environment, baseToken, {
+  name,
+  fields,
+  role,
+  retainedResources,
+  writeState
+}) {
+  let match = requireSingleResourceMatch(
+    exactControlBaseTables(listControlBaseTables(candidate, environment, baseToken), name),
+    "console"
+  );
+  if (!match) {
+    const createArgs = [
+      "base", "+table-create",
+      "--base-token", baseToken,
+      "--name", name,
+      "--fields", JSON.stringify(fields),
+      "--as", "user",
+      "--format", "json"
+    ];
+    runLarkResourceWrite(
+      candidate,
+      [...createArgs, "--dry-run"],
+      environment,
+      "console",
+      "dry_run"
+    );
+    try {
+      match = createLarkResourceWithReadback(candidate, createArgs, environment, {
+        resourceType: "console",
+        discover: () => listControlBaseTables(candidate, environment, baseToken),
+        exactMatches: exactControlBaseTables,
+        name
+      });
+    } catch (error) {
+      markPossiblyRetained(error, retainedResources, "console");
+      throw error;
+    }
+    retainedResources.push("console");
+    writeState.wrote = true;
+    if (!match) {
+      match = verifyCreatedLarkResource({
+        discover: () => listControlBaseTables(candidate, environment, baseToken),
+        exactMatches: exactControlBaseTables,
+        name,
+        resourceType: "console",
+        missingMessage: "the created control Base table could not be read back"
+      });
+    }
+  }
+  requireControlBaseSchema(
+    listControlBaseFields(candidate, environment, baseToken, match.id),
+    fields,
+    role
+  );
+  return match;
+}
+
+function createControlBaseRecord(candidate, environment, baseToken, tableId, values, {
+  retainedResources,
+  expectedCount,
+  writeState
+}) {
+  const createArgs = [
+    "base", "+record-upsert",
+    "--base-token", baseToken,
+    "--table-id", tableId,
+    "--json", JSON.stringify(values),
+    "--as", "user",
+    "--format", "json"
+  ];
+  runLarkResourceWrite(
+    candidate,
+    [...createArgs, "--dry-run"],
+    environment,
+    "console",
+    "dry_run"
+  );
+  try {
+    runLarkResourceWrite(candidate, createArgs, environment, "console", "create");
+  } catch (error) {
+    if (creationFailureIsDefinitive(error)) throw error;
+    retainedResources.push("console");
+    const recovered = listControlBaseRecords(candidate, environment, baseToken, tableId);
+    if (
+      recovered.rows.length === expectedCount &&
+      snapshotContainsControlBaseRecord(recovered, values)
+    ) {
+      writeState.wrote = true;
+      return recovered;
+    }
+    throw new ProductError(
+      "LARK_RESOURCE_CREATION_OUTCOME_UNKNOWN",
+      "the control Base record write result was uncertain and could not be verified",
+      {
+        resource_type: "console",
+        stage: "recover",
+        created_resources_may_be_retained: ["console"],
+        retry_safe: false
+      }
+    );
+  }
+  retainedResources.push("console");
+  writeState.wrote = true;
+  const verified = listControlBaseRecords(candidate, environment, baseToken, tableId);
+  if (
+    verified.rows.length !== expectedCount ||
+    !snapshotContainsControlBaseRecord(verified, values)
+  ) {
+    throw new ProductError(
+      "LARK_RESOURCE_CREATION_UNVERIFIED",
+      "the control Base record write could not be read back",
+      {
+        resource_type: "console",
+        stage: "verify",
+        created_resources_may_be_retained: ["console"],
+        retry_safe: false
+      }
+    );
+  }
+  return verified;
+}
+
+async function provisionControlBase(candidate, environment, resourceSetup, retainedResources) {
+  const name = `${candidate.principal.name}的数字分身控制台`;
+  const writeState = { wrote: false };
+  let match = requireSingleResourceMatch(
+    exactControlBases(listControlBases(candidate, environment, name), name),
+    "console"
+  );
+  if (!match) {
+    const createArgs = [
+      "base", "+base-create",
+      "--name", name,
+      "--table-name", CONTROL_BASE_TABLE_NAMES.runtime,
+      "--fields", JSON.stringify(CONTROL_BASE_FIELD_DEFINITIONS.runtime),
+      "--time-zone", candidate.principal.timezone,
+      "--as", "user",
+      "--format", "json"
+    ];
+    runLarkResourceWrite(
+      candidate,
+      [...createArgs, "--dry-run"],
+      environment,
+      "console",
+      "dry_run"
+    );
+    try {
+      match = createLarkResourceWithReadback(candidate, createArgs, environment, {
+        resourceType: "console",
+        discover: () => listControlBases(candidate, environment, name),
+        exactMatches: exactControlBases,
+        name
+      });
+    } catch (error) {
+      markPossiblyRetained(error, retainedResources, "console");
+      throw error;
+    }
+    retainedResources.push("console");
+    writeState.wrote = true;
+    if (!match) {
+      match = verifyCreatedLarkResource({
+        discover: () => listControlBases(candidate, environment, name),
+        exactMatches: exactControlBases,
+        name,
+        resourceType: "console",
+        missingMessage: "the created control Base could not be read back"
+      });
+    }
+  }
+
+  const runtimeTable = ensureControlBaseTable(candidate, environment, match.token, {
+    name: CONTROL_BASE_TABLE_NAMES.runtime,
+    fields: CONTROL_BASE_FIELD_DEFINITIONS.runtime,
+    role: "runtime",
+    retainedResources,
+    writeState
+  });
+  const groupRulesTable = ensureControlBaseTable(candidate, environment, match.token, {
+    name: CONTROL_BASE_TABLE_NAMES.groupRules,
+    fields: CONTROL_BASE_FIELD_DEFINITIONS.groupRules,
+    role: "group_rules",
+    retainedResources,
+    writeState
+  });
+
+  const personalizedRules = candidate.authority_rules ?? [];
+  let runtimeRecords = listControlBaseRecords(
+    candidate,
+    environment,
+    match.token,
+    runtimeTable.id
+  );
+  if (runtimeRecords.rows.length > 1) {
+    throw new ProductError(
+      "LARK_BASE_CONSOLE_SCHEMA_CONFLICT",
+      "the control Base runtime table must contain exactly one record",
+      { resource_type: "console", stage: "verify", table_role: "runtime" }
+    );
+  }
+  if (runtimeRecords.rows.length === 0) {
+    runtimeRecords = createControlBaseRecord(
+      candidate,
+      environment,
+      match.token,
+      runtimeTable.id,
+      {
+        名称: "默认配置",
+        数字分身启用: false,
+        允许域: ["继承"],
+        个性化规则: personalizedRules.join("\n")
+      },
+      { retainedResources, expectedCount: 1, writeState }
+    );
+  } else if (personalizedRules.length > 0) {
+    const existingRules = snapshotField(runtimeRecords, 0, "个性化规则");
+    const text = Array.isArray(existingRules)
+      ? existingRules.join("\n")
+      : typeof existingRules === "string" ? existingRules : "";
+    if (personalizedRules.some((rule) => !text.includes(rule))) {
+      throw new ProductError(
+        "BASE_RULE_SOURCE_CONFLICT",
+        "the existing control Base must contain the discovered enterprise knowledge rule before it can become the only rule source",
+        { resource_type: "console", stage: "verify" }
+      );
+    }
+  }
+
+  const groupRules = candidate.group_rules ?? [];
+  const existingGroupRecords = listControlBaseRecords(
+    candidate,
+    environment,
+    match.token,
+    groupRulesTable.id
+  );
+  const migratedGroupIds = groupRules.length > 0
+    ? verifiedMigratedGroupIds(existingGroupRecords, groupRules)
+    : new Set();
+  let expectedGroupCount = existingGroupRecords.rows.length;
+  for (const groupRule of groupRules) {
+    if (migratedGroupIds.has(groupRule.chat_id)) continue;
+    expectedGroupCount += 1;
+    const writtenGroupRecords = createControlBaseRecord(
+      candidate,
+      environment,
+      match.token,
+      groupRulesTable.id,
+      {
+        群名称: groupRule.chat_id,
+        群ID: groupRule.chat_id,
+        启用: true,
+        个性化规则: groupRule.rules.join("\n")
+      },
+      { retainedResources, expectedCount: expectedGroupCount, writeState }
+    );
+    const writtenIds = verifiedMigratedGroupIds(writtenGroupRecords, groupRules, {
+      afterWrite: true
+    });
+    if (!writtenIds.has(groupRule.chat_id)) {
+      throw groupRuleVerificationError({ afterWrite: true });
+    }
+  }
+  if (groupRules.length > 0) {
+    verifiedMigratedGroupIds(
+      listControlBaseRecords(candidate, environment, match.token, groupRulesTable.id),
+      groupRules,
+      { afterWrite: writeState.wrote, requireComplete: true }
+    );
+  }
+
+  candidate.console = {
+    base_token: match.token,
+    runtime_table: runtimeTable.id,
+    group_rules_table: groupRulesTable.id
+  };
+  candidate.control = { mode: "base" };
+  delete candidate.authority_rules;
+  delete candidate.group_rules;
+  addGuidedCapabilityDomains(candidate, "console");
+  resourceSetup[writeState.wrote ? "created" : "reused"].push("console");
+}
+
+function configureKnowledgeReference(candidate, resource) {
+  const rule = enterpriseKnowledgeRuleFromReference({
+    name: resource.name,
+    spaceId: resource.id,
+    direction: "全部业务方向"
+  });
+  candidate.authority_rules = [...new Set([
+    ...(candidate.authority_rules ?? []),
+    rule
+  ])];
+  addGuidedCapabilityDomains(candidate, "enterprise_knowledge");
+}
+
+function configureDailyMemoryReference(candidate, resource) {
+  candidate.daily_memory = {
+    folder_token: resource.token,
+    folder_name: resource.name,
+    excluded_chat_ids: candidate.daily_memory?.excluded_chat_ids ?? [],
+    excluded_topics: candidate.daily_memory?.excluded_topics ?? []
+  };
+  addGuidedCapabilityDomains(candidate, "daily_memory");
+}
+
+async function provisionKnowledgeSpace(candidate, environment, resourceSetup, retainedResources) {
+  const name = `${candidate.principal.name}的数字分身知识库`;
+  let match = requireSingleResourceMatch(
+    exactWikiSpaces(listKnowledgeSpaces(candidate, environment), name),
+    "enterprise_knowledge"
+  );
+  if (match) {
+    configureKnowledgeReference(candidate, match);
+    resourceSetup.reused.push("enterprise_knowledge");
+    return;
+  }
+
+  const createArgs = [
+    "wiki", "+space-create",
+    "--name", name,
+    "--description", "飞书数字分身企业知识空间",
+    "--as", "user",
+    "--format", "json"
+  ];
+  runLarkResourceWrite(
+    candidate,
+    [...createArgs, "--dry-run"],
+    environment,
+    "enterprise_knowledge",
+    "dry_run"
+  );
+  match = createLarkResourceWithReadback(candidate, createArgs, environment, {
+    resourceType: "enterprise_knowledge",
+    discover: () => listKnowledgeSpaces(candidate, environment),
+    exactMatches: exactWikiSpaces,
+    name
+  });
+  retainedResources.push("enterprise_knowledge");
+  if (!match) {
+    match = verifyCreatedLarkResource({
+      discover: () => listKnowledgeSpaces(candidate, environment),
+      exactMatches: exactWikiSpaces,
+      name,
+      resourceType: "enterprise_knowledge",
+      missingMessage: "the created Wiki space could not be read back"
+    });
+  }
+  configureKnowledgeReference(candidate, match);
+  resourceSetup.created.push("enterprise_knowledge");
+}
+
+async function provisionDailyMemoryFolder(candidate, environment, resourceSetup, retainedResources) {
+  const name = `${candidate.principal.name}的每日工作记忆`;
+  let match = requireSingleResourceMatch(
+    exactRootFolders(listRootDriveFolders(candidate, environment), name),
+    "daily_memory"
+  );
+  if (match) {
+    configureDailyMemoryReference(candidate, match);
+    resourceSetup.reused.push("daily_memory");
+    return;
+  }
+
+  const createArgs = [
+    "drive", "+create-folder",
+    "--name", name,
+    "--as", "user",
+    "--format", "json"
+  ];
+  runLarkResourceWrite(
+    candidate,
+    [...createArgs, "--dry-run"],
+    environment,
+    "daily_memory",
+    "dry_run"
+  );
+  match = createLarkResourceWithReadback(candidate, createArgs, environment, {
+    resourceType: "daily_memory",
+    discover: () => listRootDriveFolders(candidate, environment),
+    exactMatches: exactRootFolders,
+    name
+  });
+  retainedResources.push("daily_memory");
+  if (!match) {
+    match = verifyCreatedLarkResource({
+      discover: () => listRootDriveFolders(candidate, environment),
+      exactMatches: exactRootFolders,
+      name,
+      resourceType: "daily_memory",
+      missingMessage: "the created Drive folder could not be read back"
+    });
+  }
+  configureDailyMemoryReference(candidate, match);
+  resourceSetup.created.push("daily_memory");
+}
+
+async function provisionMissingGuidedResources(candidate, missing, environment, {
+  resourceSetup,
+  retainedResources
+}) {
+  for (const resource of missing) {
+    if (resource === "enterprise_knowledge") {
+      await provisionKnowledgeSpace(candidate, environment, resourceSetup, retainedResources);
+    } else if (resource === "daily_memory") {
+      await provisionDailyMemoryFolder(candidate, environment, resourceSetup, retainedResources);
+    } else if (resource === "console") {
+      await provisionControlBase(candidate, environment, resourceSetup, retainedResources);
+    }
+  }
+  return candidate;
 }
 
 function labeledRuleValue(rule, labelPattern, { identifier = false } = {}) {
@@ -929,19 +2127,24 @@ function configuredResourceDomainsReady(config) {
   );
 }
 
-async function larkResourcesDoctor(config, environment) {
+async function larkResourcesDoctor(config, environment, {
+  requirePrimaryBaseMasterSwitch = false
+} = {}) {
   const configuredReferences = knowledgeReferences(config);
   if (!config.console && configuredReferences.length === 0 && !config.daily_memory) {
     return check("pass", "NOT_CONFIGURED");
   }
+  let resourceType = null;
   try {
     if (!configuredResourceDomainsReady(config)) {
       throw new Error("configured Lark resources exceed the allowed domain ceiling");
     }
     let effectiveConfig = config;
     if (config.console) {
+      resourceType = "control_base";
       effectiveConfig = await loadBaseConsole(config, {
-        runner: (argv) => runLarkReadCommand(argv, environment)
+        runner: (argv) => runLarkCommand(argv, environment),
+        requirePrimaryMasterSwitch: requirePrimaryBaseMasterSwitch
       });
       if (
         typeof effectiveConfig.production_enabled !== "boolean" ||
@@ -956,6 +2159,7 @@ async function larkResourcesDoctor(config, environment) {
 
     const references = knowledgeReferences(effectiveConfig);
     if (references.length > 0) {
+      resourceType = "enterprise_knowledge";
       const envelope = larkJson(config.lark_cli_bin ?? "lark-cli", config.profile, [
         "wiki", "+space-list",
         "--as", "user",
@@ -972,6 +2176,7 @@ async function larkResourcesDoctor(config, environment) {
     }
 
     if (config.daily_memory) {
+      resourceType = "daily_memory";
       const envelope = larkJson(config.lark_cli_bin ?? "lark-cli", config.profile, [
         "drive", "files", "list",
         "--params", JSON.stringify({
@@ -985,6 +2190,11 @@ async function larkResourcesDoctor(config, environment) {
     }
     return check("pass", "READY");
   } catch {
+    if (resourceType === "control_base") {
+      return check("fail", "BASE_CONSOLE_INVALID", {
+        setup_guide: controlBaseSetupGuide()
+      });
+    }
     return check("fail", "LARK_RESOURCES_UNAVAILABLE");
   }
 }
@@ -1042,7 +2252,11 @@ async function discoverGuidedPrincipal({
   };
 }
 
-async function guidedSetupCandidate(options, environment, { current = null } = {}) {
+async function guidedSetupCandidate(options, environment, {
+  current = null,
+  resourceSetup = { created: [], reused: [] },
+  retainedResources = []
+} = {}) {
   if (current) {
     const candidate = structuredClone(current);
     const profile = options.profile === undefined
@@ -1082,9 +2296,19 @@ async function guidedSetupCandidate(options, environment, { current = null } = {
       candidate.message_scope = options.message_scope;
     }
     if (options.domains !== undefined || options.capabilities !== undefined) {
-      candidate.allowed_lark_domains = guidedAllowedDomains(options);
+      const selectedDomains = guidedAllowedDomains(options);
+      candidate.allowed_lark_domains = current.control?.mode === "base"
+        ? [...new Set([...selectedDomains, ...current.allowed_lark_domains])]
+        : selectedDomains;
     }
-    return validateGuidedCandidate(applyGuidedResourceOptions(candidate, options));
+    const configured = applyGuidedResourceOptions(candidate, options);
+    requireMessageScopeApproval(configured, current, options);
+    const missing = requireGuidedResourceSelection(configured, options);
+    await provisionMissingGuidedResources(configured, missing, environment, {
+      resourceSetup,
+      retainedResources
+    });
+    return validateGuidedCandidate(configured);
   }
 
   const profile = options.profile === undefined
@@ -1137,7 +2361,14 @@ async function guidedSetupCandidate(options, environment, { current = null } = {
     },
     allowed_lark_domains: guidedAllowedDomains(options)
   };
-  return validateGuidedCandidate(applyGuidedResourceOptions(candidate, options));
+  const configured = applyGuidedResourceOptions(candidate, options);
+  requireMessageScopeApproval(configured, null, options);
+  const missing = requireGuidedResourceSelection(configured, options);
+  await provisionMissingGuidedResources(configured, missing, environment, {
+    resourceSetup,
+    retainedResources
+  });
+  return validateGuidedCandidate(configured);
 }
 
 function nodeVersionSupported() {
@@ -1218,6 +2449,29 @@ async function configure(root, packageRoot, options, environment) {
   };
 }
 
+function withRetainedResourceDetails(error, retainedResources) {
+  const retained = [...new Set(retainedResources)];
+  if (retained.length === 0) return error;
+  const details = {
+    ...(error instanceof ProductError && error.details &&
+      typeof error.details === "object" && !Array.isArray(error.details)
+      ? error.details
+      : {}),
+    created_resources_retained: retained,
+    retry_safe: error instanceof ProductError && error.details?.retry_safe === false
+      ? false
+      : true
+  };
+  if (error instanceof ProductError) {
+    return new ProductError(error.code, error.message, details);
+  }
+  return new ProductError(
+    "SETUP_FAILED_AFTER_RESOURCE_CREATION",
+    "setup failed after creating Feishu resources; the resources were retained for a safe retry",
+    details
+  );
+}
+
 async function setup(root, packageRoot, serviceOptions, options, environment) {
   validateGuidedResourceOptions(options);
   if (options.capabilities !== undefined && options.domains !== undefined) {
@@ -1229,7 +2483,7 @@ async function setup(root, packageRoot, serviceOptions, options, environment) {
   const rootWasPresent = await pathExists(root);
   const originalInstallation = await readInstallation(root, { required: false });
   if (!originalInstallation) await requireEmptyUninitializedRoot(root);
-  let original = null;
+  let originalConfigState = null;
   if (originalInstallation) {
     const configPath = resolveInside(root, originalInstallation.config_path, "config_path");
     const configPresent = await pathExists(configPath);
@@ -1243,23 +2497,42 @@ async function setup(root, packageRoot, serviceOptions, options, environment) {
     } else {
       config = null;
     }
-    original = {
+    originalConfigState = {
       config,
       configPath,
-      configPresent,
-      frozen: runtimeCommand(root, originalInstallation, "state").frozen === true,
-      services: await serviceStatus(root, serviceOptions)
+      configPresent
     };
   }
-  if (original?.configPresent && original.config === undefined) {
+  if (originalConfigState?.configPresent && originalConfigState.config === undefined) {
     throw new ProductError("INVALID_INSTANCE_CONFIG", "active instance configuration is invalid");
   }
-  const candidate = options.config !== undefined
-    ? (await loadSetupCandidateFile(options, packageRoot)).candidate
-    : await guidedSetupCandidate(options, environment, {
-      current: original?.config ?? null
-    });
-  requireMessageScopeApproval(candidate, original?.config ?? null, options);
+  const resourceSetup = { created: [], reused: [] };
+  const retainedResources = [];
+  let candidate;
+  try {
+    candidate = options.config !== undefined
+      ? (await loadSetupCandidateFile(options, packageRoot)).candidate
+      : await guidedSetupCandidate(options, environment, {
+        current: originalConfigState?.config ?? null,
+        resourceSetup,
+        retainedResources
+      });
+  } catch (error) {
+    throw withRetainedResourceDetails(error, retainedResources);
+  }
+  requireMessageScopeApproval(candidate, originalConfigState?.config ?? null, options);
+  let original = null;
+  if (originalInstallation) {
+    try {
+      original = {
+        ...originalConfigState,
+        frozen: runtimeCommand(root, originalInstallation, "state").frozen === true,
+        services: await serviceStatus(root, serviceOptions)
+      };
+    } catch (error) {
+      throw withRetainedResourceDetails(error, retainedResources);
+    }
+  }
   let installation = originalInstallation;
   try {
     if (!installation) {
@@ -1282,11 +2555,14 @@ async function setup(root, packageRoot, serviceOptions, options, environment) {
         }
       }
     }
+    const requirePrimaryBaseMasterSwitch = current === null;
     const configured = await materializeConfiguredCandidate(candidate, options, environment, {
       current
     });
     await writePrivateJson(configPath, configured);
-    await requireDoctorReady(root, serviceOptions, options, environment);
+    await requireDoctorReady(root, serviceOptions, options, environment, {
+      requirePrimaryBaseMasterSwitch
+    });
     await installServices(root, { ...serviceOptions, start: true });
     await requireServicesReady(root, serviceOptions);
     await changeFreeze(root, false);
@@ -1297,7 +2573,13 @@ async function setup(root, packageRoot, serviceOptions, options, environment) {
         "setup final verification did not reach an operationally healthy state"
       );
     }
-    return { status: "setup-complete", ...final };
+    return {
+      status: "setup-complete",
+      ...final,
+      ...(options.create_missing_resources === true
+        ? { resource_setup: resourceSetup }
+        : {})
+    };
   } catch (error) {
     if (!originalInstallation && installation) {
       let recovered = true;
@@ -1320,9 +2602,12 @@ async function setup(root, packageRoot, serviceOptions, options, environment) {
         recovered = false;
       }
       if (!recovered) {
-        throw new ProductError(
-          "SETUP_RECOVERY_FAILED",
-          "setup failed and the original local state could not be restored"
+        throw withRetainedResourceDetails(
+          new ProductError(
+            "SETUP_RECOVERY_FAILED",
+            "setup failed and the original local state could not be restored"
+          ),
+          retainedResources
         );
       }
     } else if (originalInstallation && original) {
@@ -1363,13 +2648,16 @@ async function setup(root, packageRoot, serviceOptions, options, environment) {
         recovered = false;
       }
       if (!recovered) {
-        throw new ProductError(
-          "SETUP_RECOVERY_FAILED",
-          "setup failed and the original local state could not be restored"
+        throw withRetainedResourceDetails(
+          new ProductError(
+            "SETUP_RECOVERY_FAILED",
+            "setup failed and the original local state could not be restored"
+          ),
+          retainedResources
         );
       }
     }
-    throw error;
+    throw withRetainedResourceDetails(error, retainedResources);
   }
 }
 
@@ -1565,7 +2853,10 @@ async function doctor(
   serviceOptions,
   options,
   environment,
-  { checkServices = true } = {}
+  {
+    checkServices = true,
+    requirePrimaryBaseMasterSwitch = false
+  } = {}
 ) {
   const installation = await readInstallation(root);
   let inspectedInstallation = installation;
@@ -1626,7 +2917,9 @@ async function doctor(
     checks.lark_resources = [lark.auth, lark.user, lark.bot].every(
       (identity) => identity.status === "pass"
     )
-      ? await larkResourcesDoctor(config, environment)
+      ? await larkResourcesDoctor(config, environment, {
+        requirePrimaryBaseMasterSwitch
+      })
       : check("fail", "NOT_CHECKED");
     checks.production_data = config.production_data_approved === true
       ? check("pass", "READY")
@@ -1676,14 +2969,23 @@ async function doctor(
   };
 }
 
-async function requireDoctorReady(root, serviceOptions, options, environment) {
+async function requireDoctorReady(root, serviceOptions, options, environment, {
+  requirePrimaryBaseMasterSwitch = false
+} = {}) {
   const health = await doctor(root, serviceOptions, options, environment, {
-    checkServices: false
+    checkServices: false,
+    requirePrimaryBaseMasterSwitch
   });
   if (health.ready_for_service !== true) {
+    const summary = summarizeDoctor(health);
+    const setupGuide = health.checks?.lark_resources?.setup_guide;
     throw new ProductError(
       "DOCTOR_FAILED",
-      "the local instance must pass Doctor before automatic processing can change"
+      "the local instance must pass Doctor before automatic processing can change",
+      {
+        failed_checks: summary.failed_checks,
+        ...(setupGuide ? { setup_guide: setupGuide } : {})
+      }
     );
   }
   return health;

@@ -1,8 +1,3 @@
-<!--
-SPDX-FileCopyrightText: 2026 Feishu Digital Twin contributors
-SPDX-License-Identifier: Apache-2.0
--->
-
 [中文](./README.md) | [English](./README.en.md)
 
 # Feishu Digital Twin
@@ -13,7 +8,7 @@ Turn Codex into a self-hosted Feishu work agent that can handle messages and per
 
 > This project is not an official product of Feishu, Lark, or OpenAI. All trademarks belong to their respective owners.
 
-> The current public version is `v0.1.9`. macOS is the supported production platform. Installation is currently available from GitHub source or a version tag; npm and Codex Marketplace one-click packages have not been published.
+> The current candidate version is `v0.1.11`. macOS is the supported production platform. Installation is currently available from GitHub source or a version tag; npm and Codex Marketplace one-click packages have not been published.
 
 ## Understand it in one minute
 
@@ -23,7 +18,7 @@ Feishu Digital Twin is an AI work agent that runs on your own macOS device:
 - **Make decisions**: use Codex and natural-language rules to ignore, reply, ask a follow-up question, request confirmation, or execute an action.
 - **Perform work**: use the official Feishu `lark-cli` and lark-* Skills for messages, tasks, calendars, documents, Base, Drive, Wiki, and related capabilities.
 - **Preserve identity**: reply as the Bot when the Bot receives the message, and as the principal user when that identity receives it; the model cannot switch identities by itself.
-- **Keep human control**: combine local permission ceilings, Feishu authorization, an optional Base master switch, and confirmation rules to constrain visibility and execution.
+- **Keep human control**: combine local permission ceilings, Feishu authorization, the Base master switch, and confirmation rules to constrain visibility and execution.
 
 ```text
 Feishu events / supplemental reads → safe intake and identity routing → Codex decision → official lark-cli → reply or work result
@@ -39,7 +34,7 @@ This is neither a conventional mention-only Bot nor a hosted SaaS. Every automat
 | Dual-identity replies | Messages sent to the Bot are answered by the Bot; messages sent to the principal user are answered with the principal user's identity. The model cannot switch identities by itself. |
 | AI decisions and execution | Codex, Skills, and natural-language rules decide when to engage, what to say, when to request confirmation, and which actions to run. |
 | Feishu work execution | Uses the official `lark-cli` for messages, tasks, calendars, documents, Base, Drive, Wiki, and related capabilities. |
-| Base control console | Optionally uses two existing Base tables for the master switch, natural-language rules, group-specific rules, and knowledge routing. |
+| Base control console | Required for a complete installation. Reuse an existing Base or let `setup` create two tables for the master switch, natural-language rules, group-specific rules, and knowledge routing. |
 | Enterprise knowledge | Classifies the direction of a conversation and retrieves relevant content from configured enterprise knowledge spaces before replying. |
 | Daily work memory | Summarizes the day's chats, tasks, calendar events, and execution results into a designated Feishu Drive folder. |
 | Long-running local service | Starts real-time intake, supplemental reads, and daily memory after macOS login, with status, freeze, upgrade, rollback, and uninstall commands. |
@@ -56,12 +51,12 @@ This project is for individuals or teams that can self-host the runtime, adminis
 - a Feishu application with a Bot and message events enabled;
 - a Codex CLI environment that can run `codex exec --ephemeral` non-interactively in the background;
 - a model-service environment approved to process the selected Feishu business data;
-- if you enable the Base console, enterprise knowledge, or daily memory, prepare the corresponding Feishu resources in advance.
+- the Base console is mandatory for a normal complete installation, but it does not have to be created manually in advance. Existing Base, knowledge-space, and daily-memory resources can be supplied, or `setup` can create them through the official CLI.
 
 Install a fixed version from GitHub:
 
 ```bash
-git clone --branch v0.1.9 --depth 1 https://github.com/wildbyteai/feishu-digital-twin.git
+git clone --branch v0.1.11 --depth 1 https://github.com/wildbyteai/feishu-digital-twin.git
 cd feishu-digital-twin
 npm install --global .
 feishu-digital-twin --help
@@ -76,14 +71,34 @@ If you do not want a global installation, replace `feishu-digital-twin` in the e
 | Discovers and verifies the principal user and Bot identities in the selected `lark-cli` profile | Create the Feishu application, enable the Bot, and publish an application version |
 | Verifies that Codex can perform one structured inference without business content | Configure required application permissions and subscribe to `im.message.receive_v1` |
 | Derives the minimum local Feishu business domains from `--capabilities` | Complete the required Bot scopes and principal-user OAuth authorization |
-| Read-only verifies supplied Base, table, Wiki, and Drive references | Create the Base and two control tables according to the [console schema](./docs/feishu-console.md), and create the Wiki knowledge space and daily-memory folder as needed |
-| Writes a private, current-user-only configuration outside the Git worktree | Provide the names, IDs, or tokens of those existing resources |
+| Read-only verifies supplied Base, table, Wiki, and Drive references | When reusing resources, provide their names and stable IDs or tokens |
+| After explicit `--create-missing-resources` approval, creates and reads back the missing Base, control tables, knowledge space, and daily-memory folder as the user | Confirm that deterministic resource names are suitable for the principal user |
+| Writes a private, current-user-only configuration outside the Git worktree | Keep `数字分身启用` off during verification, then enable it after acceptance |
 | Installs and starts three macOS LaunchAgent roles | Confirm that the model environment is approved for the relevant Feishu data |
 | Runs Doctor, reads back status, and restores the prior local state on failure | Select the message scope and enabled capabilities |
 
-> **Base, tables, the knowledge space, and the daily-memory folder must be created in advance. `setup` only references and read-only verifies them; it does not automatically write or create these resources.**
+> **The Base console is mandatory, but it does not need to be created manually in advance. When Base, knowledge, or daily-memory resources are missing, `setup` lists exactly what is required. With `--create-missing-resources`, it performs official dry runs, creation, and read-back verification through `base +base-create`, `base +table-create`, `base +record-upsert`, `wiki +space-create`, and `drive +create-folder`.**
 
-Creating these resources is a separate Feishu write operation. Use the official `lark-cli` with `--dry-run` first, then let the deployer execute the approved write. Never commit real tokens, IDs, or enterprise rules to GitHub.
+Automatic creation uses the principal user's identity and the deterministic names `<principal display name>的数字分身控制台`, `<principal display name>的数字分身知识库`, and `<principal display name>的每日工作记忆`. The control Base contains `运行配置` and `群级规则`; its initial master switch is off, the runtime table contains exactly one record, and the group-rules table is empty. Re-running setup reuses one exact-name match and completes a partially created table or initial record. Multiple exact matches or a conflicting same-name Base schema fail closed. Successfully created Feishu resources are retained after a later local failure and reused on the next run. Real IDs, tokens, and enterprise rules are written only to a Git-external `0600` private configuration and are not echoed in normal command output.
+
+### Switches and confirmations shown by `setup`
+
+Run the following command to see the Base first-install template, initial values, and verification sequence directly in the CLI:
+
+```bash
+feishu-digital-twin setup --help
+```
+
+There is one day-to-day switch and three deployment-time confirmations:
+
+| Item | Purpose | When to use it |
+| --- | --- | --- |
+| Base field `数字分身启用` | The only day-to-day master switch | Keep it unchecked during first setup; check it after setup and status verification |
+| `--approve-production-data` | Confirms that the selected Codex environment is approved for the target business data | Deployment approval, not a daily switch |
+| `--approve-message-scope` | Approves an initial or broader `internal_visible` / `all_visible` scope | Only when expanding message visibility |
+| `--create-missing-resources` | Explicitly approves creation of a missing Base, control table, Wiki space, or Drive daily-memory folder | Required for a normal installation when no existing control Base is supplied |
+
+When the Base console is enabled, keep exactly one row in the runtime table. Recommended initial values are the optional display label `名称=默认配置`, `数字分身启用=unchecked`, `允许域=继承`, and an empty or natural-language `个性化规则`; `群名称` is also an optional display field. The old `生产执行` field remains only for compatibility with existing deployments; new installations should use `数字分身启用`. If setup succeeds while the master switch is off, `readiness=safe-but-disabled` is expected. After identities, permissions, and background services have been verified, check `数字分身启用`, wait up to about ten seconds, and run `feishu-digital-twin status` again; it should report `readiness=ready`.
 
 ## Features and required permissions
 
@@ -98,9 +113,9 @@ Feishu permissions have three layers: the application's **Bot scopes**, the prin
 | Base | `base` | `base` | User | Base read scope; add record write scope only when needed |
 | Enterprise knowledge | `enterprise_knowledge` | `drive,wiki,docs,base,sheets,markdown` | User | Read scopes for Wiki, Drive, and the actual content types in use |
 | Daily work memory | `daily_memory` | `im,task,calendar,drive,docs` | User | Read access to the day's facts plus write access to the target Drive folder and document |
-| Base control console | `console` | `base` | User | Read access to the selected Base and its two control tables |
+| Base control console | `console` (automatically included for normal setup) | `base` | User | Read access when reusing a Base; Base creation, table creation, and initial-record write access when provisioning automatically |
 
-New instances default to `message_scope=bot_only` and the `im` domain. Do not request `all` by default, and do not request organization-management or member-management permissions unrelated to the selected capabilities.
+New instances default to `message_scope=bot_only` and at least the `im,base` local domains; `base` is reserved for the mandatory control console. Do not request `all` by default, and do not request organization-management or member-management permissions unrelated to the selected capabilities.
 
 Exact scope names can evolve with the Feishu Open Platform and `lark-cli`. Use the current CLI to obtain the authoritative list:
 
@@ -120,7 +135,7 @@ Handle missing Bot scopes in the Feishu developer console. Grant missing User sc
 
 ### Scenario A: minimum message mode
 
-Handle only messages officially visible to the Bot. Base, Wiki, and a daily-memory folder are not required:
+Handle only messages officially visible to the Bot. Wiki and a daily-memory folder are not required, but the Base console remains mandatory. If no existing Base is available, let setup create it:
 
 ```bash
 feishu-digital-twin setup \
@@ -128,6 +143,7 @@ feishu-digital-twin setup \
   --timezone Asia/Shanghai \
   --codex-environment-root <private-codex-environment> \
   --capabilities message \
+  --create-missing-resources \
   --approve-production-data
 ```
 
@@ -142,15 +158,34 @@ feishu-digital-twin setup \
   --codex-environment-root <private-codex-environment> \
   --message-scope internal_visible \
   --capabilities message \
+  --create-missing-resources \
   --approve-message-scope \
   --approve-production-data
 ```
 
 `--approve-message-scope` is mandatory when first selecting a non-`bot_only` scope or broadening an existing scope. Base, AI, ordinary messages, and background jobs cannot broaden it by themselves.
 
-### Scenario C: Base console, enterprise knowledge, and daily memory
+### Scenario C: no existing Base, knowledge space, or daily-memory folder
 
-First create the Base and its two control tables according to the [Base console schema](./docs/feishu-console.md). Then create the daily-memory Drive folder and pass the existing resources to `setup`. The runtime table must contain exactly one valid runtime record. The group-rules table may contain no records, but both tables must contain all documented fields. The allowed-domain field must be exactly “inherit” or a non-empty subset of the local ceiling. Knowledge routing can be maintained in Base rules:
+For a simple full-capability installation, let setup create all missing resources through the official CLI. The discovered knowledge route is written into the new Base `个性化规则` field, so the final configuration has no second local rule source:
+
+```bash
+feishu-digital-twin setup \
+  --profile <lark-cli-profile> \
+  --timezone Asia/Shanghai \
+  --codex-environment-root <private-codex-environment> \
+  --message-scope internal_visible \
+  --capabilities message,task,calendar,docs,enterprise_knowledge,daily_memory \
+  --create-missing-resources \
+  --approve-message-scope \
+  --approve-production-data
+```
+
+Without `--create-missing-resources`, setup performs no silent write. It returns `missing_resources`, the options for selecting existing resources, and the explicit automatic-creation option.
+
+### Scenario D: reuse an existing Base console and other resources
+
+If a Base already follows the [Base control console schema](./docs/feishu-console.md), pass its stable references directly. The runtime table must contain exactly one valid runtime record. The group-rules table may contain no records, but both tables must contain all documented fields. The allowed-domain field must be exactly “inherit” or a non-empty subset of the local ceiling. Existing Base resources are verified read-only and are never silently reshaped. Knowledge routing remains in the Base rules; an existing daily-memory folder can be supplied directly:
 
 ```bash
 feishu-digital-twin setup \
@@ -168,7 +203,7 @@ feishu-digital-twin setup \
   --approve-production-data
 ```
 
-Without the Base console, an existing knowledge space can be referenced with `--knowledge-space-name`, `--knowledge-space-id`, and `--knowledge-direction` as one group. See [global configuration](./docs/getting-started/global-configuration.md) for every option.
+When there is no existing Base but an existing knowledge space should be reused, pass `--knowledge-space-name`, `--knowledge-space-id`, and `--knowledge-direction` together with `--create-missing-resources`. Setup creates the control Base and writes the knowledge route into its initial personalized rules. See [global configuration](./docs/getting-started/global-configuration.md) for every option.
 
 ## Post-installation verification
 
@@ -207,7 +242,7 @@ See [runtime operations](./docs/operations/runtime.md) for details. Uninstall ke
 - The project has no remote telemetry by default and does not upload diagnostic bundles. Runtime logs do not retain message bodies, full model output, or credentials, and the project does not build long-term chat history. Pending confirmation keeps only the minimum action addressing for up to ten minutes and clears it after approval, rejection, or expiry.
 - `allowed_lark_domains` is a local ceiling that cannot be exceeded. The Base console can only narrow it.
 - Trusted runtime code enforces reply identity, the `🤖` disclosure mark, freezing, deduplication, supplemental-read cursors, and the ownership-transfer prohibition.
-- The installer read-only verifies existing Feishu resources. It does not automatically create or modify Base, Wiki, or Drive folders.
+- Existing Base resources are always verified read-only. Only an explicit `--create-missing-resources` allows the official CLI to create or complete a missing Base, control table, initial record, Wiki space, or Drive daily-memory folder.
 
 The model service used inside Codex is controlled by the deployer's own Codex configuration. This project invokes only `codex exec --ephemeral`; it does not store model endpoints or implement Provider selection and switching. The deployer is responsible for ensuring that the Codex environment is approved for the relevant Feishu data.
 
