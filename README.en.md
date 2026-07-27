@@ -8,7 +8,7 @@ Turn Codex into a self-hosted Feishu work agent that can handle messages and per
 
 > This project is not an official product of Feishu, Lark, or OpenAI. All trademarks belong to their respective owners.
 
-> The current candidate version is `v0.1.11`. macOS is the supported production platform. Installation is currently available from GitHub source or a version tag; npm and Codex Marketplace one-click packages have not been published.
+> The current stable source release is `v0.1.11`. macOS is the supported production platform. Installation is currently available from GitHub source or a version tag; npm and Codex Marketplace one-click packages have not been published.
 
 ## Understand it in one minute
 

@@ -51,6 +51,7 @@ test("公开上手、配置、运行和隐私文档随源码、公共快照和 n
 
 test("根 README 保持中英文双语且关键安装边界一致", () => {
   const packageManifest = JSON.parse(read("package.json"));
+  const releaseTag = `v${packageManifest.version}`;
   const publicSnapshot = JSON.parse(read("release/public-snapshot.example.json"));
   const packaged = new Set(packageManifest.files);
   const publicFiles = new Set(publicSnapshot.files.map((entry) => entry.path));
@@ -102,7 +103,6 @@ test("根 README 保持中英文双语且关键安装边界一致", () => {
     assert.equal(publicFiles.has(relativePath), true, `${relativePath} missing from public snapshot`);
   }
   for (const content of [chinese, english]) {
-    assert.match(content, /v0\.1\.11/u);
     assert.match(content, /--create-missing-resources/u);
     assert.match(content, /im\.message\.receive_v1/u);
     assert.match(content, /codex exec --ephemeral/u);
@@ -114,6 +114,11 @@ test("根 README 保持中英文双语且关键安装边界一致", () => {
   }
   assert.match(chinese, /Base 控制台是强制配置.*不要求提前手工创建/su);
   assert.match(english, /Base console is mandatory.*does not need to be created manually in advance/su);
+  assert.equal(chinese.includes(`当前稳定源码版本为 \`${releaseTag}\``), true);
+  assert.equal(english.includes(`The current stable source release is \`${releaseTag}\``), true);
+  for (const content of [chinese, english]) {
+    assert.equal(content.includes(`git clone --branch ${releaseTag} --depth 1`), true);
+  }
 });
 
 test("根 README 只用三个主步骤引导真实安装并链接全部详细指引", () => {
