@@ -84,6 +84,7 @@
     "product/src/cli.mjs",
     "product/src/installation.mjs",
     "product/src/service-host.mjs",
+    "README.en.md",
     "README.md",
     "release/public-snapshot-private-policy.example.json",
     "release/public-snapshot.example.json",
