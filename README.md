@@ -51,16 +51,27 @@
 - 已确认允许处理目标飞书业务数据的模型服务环境；
 - Base 控制台是普通完整安装的强制配置，但无需提前手工建表；Base、企业知识空间和每日记忆目录都可以传入已有资源，也可以由 `setup` 调用官方 CLI 创建。
 
-先从 GitHub 固定版本安装命令行：
+### 安装命令行
+
+本项目目前通过 GitHub 源码分发。正式使用时，请从 [GitHub Releases](https://github.com/wildbyteai/feishu-digital-twin/releases) 下载并解压需要的版本；如需查看最新开发代码，可以克隆 `main`：
 
 ```bash
-git clone --branch v0.1.11 --depth 1 https://github.com/wildbyteai/feishu-digital-twin.git
+git clone --depth 1 https://github.com/wildbyteai/feishu-digital-twin.git
 cd feishu-digital-twin
+```
+
+进入源码目录后，将 CLI 安装到全局。完整配置和后台服务使用这种方式：
+
+```bash
 npm install --global .
 feishu-digital-twin --help
 ```
 
-不希望全局安装时，可以在仓库目录把下文的 `feishu-digital-twin` 替换为 `node bin/feishu-digital-twin.mjs`。
+只需查看 CLI 帮助或调试源码时，可以不安装，直接在源码目录运行入口文件：
+
+```bash
+node bin/feishu-digital-twin.mjs --help
+```
 
 ## setup 会自动做什么
 
