@@ -15,7 +15,7 @@
 允许清单使用精确文件路径，不支持递归 glob、排除规则或导出时重命名。`.git`、`.scratch`、`.runtime`、`.codex-runtime`、`.workbuddy`、私有 Overlay 和任何 `*.privacy-key` 路径永久禁止进入候选。
 每个 provenance 的 `origin` 必须是已核清的中性小写标识；`unknown`、`pending`、`tbd` 等未决来源会在策略阶段失败。
 
-现有部署兼容入口 `bin/twin-supervisor.mjs` 与 `runtime/bin/twin-runtime.mjs` 只用于本机旧实例连续运行。它们不进入公共源码快照、Codex 插件包或 npm 包；公开安装统一使用 `bin/feishu-digital-twin-supervisor.mjs` 与 `runtime/bin/feishu-digital-twin-runtime.mjs`。
+现有部署兼容入口 `bin/twin-supervisor.mjs` 与 `runtime/bin/twin-runtime.mjs` 只用于本机旧实例连续运行。它们不进入公共源码快照、Codex 插件包或 npm tarball；公开安装统一使用 `bin/feishu-digital-twin-supervisor.mjs` 与 `runtime/bin/feishu-digital-twin-runtime.mjs`。插件包和 npm tarball 只用于本地一致性与安装闭环验证，不作为公共下载渠道。
 
 修改允许清单后，可以先做不读取业务数据、不运行连续性检查的结构校验：
 
@@ -94,9 +94,9 @@ node bin/twin-public-snapshot.mjs \
   "$RELEASE_OUTPUT/candidates/sha256-<tree-digest>"
 ```
 
-该命令验证候选布局、tree、manifest、全部 SHA-256、SPDX 文件映射以及 in-toto/SLSA subject 绑定，只输出摘要。它不能替代公共仓阶段由 GitHub OIDC/Sigstore 生成的签名 artifact attestation；正式发布仍需对同一最终产物追加公开可验证的 build provenance 和 SBOM attestation。
+该命令验证候选布局、tree、manifest、全部 SHA-256、SPDX 文件映射以及 in-toto/SLSA subject 绑定，只输出摘要。当前稳定分发只使用受保护主干和不可变 Git 标签，因此本地 attestation 只作为内容与来源校验证据，不宣称是 GitHub OIDC/Sigstore 签名。若以后通过新 ADR 增加独立制品发布渠道，再为该渠道定义签名要求。
 
-首次公开不能把当前私有仓改为 public，也不能推送现有历史。审核者只能从 `status: attested` 且摘要配对的 `tree/` 创建一个全新仓库和单一初始提交；随后配置真实 CODEOWNERS 团队、安全报告地址、分支保护和发布身份。完整边界见[完整开源方案](../public/open-source-plan.md)。
+最初建立公共仓时不得复制私有 Git 历史；这一历史隔离约束继续有效。后续稳定版本只能通过受保护主干合并，并在必需检查通过后创建不可变 Git 标签。完整边界见[完整开源方案](../public/open-source-plan.md)。
 
 成功 attestation 和失败 receipt 均使用 `0600`，绑定公开策略、合并后的私有扫描策略、manifest 和连续性证据摘要，只记录阶段码、规则码、清理状态和摘要，不保存实例配置路径、派生禁词、命中正文、原始健康报告或私有词表。实例配置只读一次并在内存中派生规则，不复制到 attempt、候选或 receipt。`status: attested` 只表示内容与证据已核验，不单独表示生成成功；只有候选目录存在，且 candidate ID、tree、manifest 与策略摘要全部和 attestation 配对时，才是可审核候选。attestation 先持久化，候选目录的最终原子 rename 是唯一公开候选可见边界，因此进程在两步之间被强制终止时最多留下无候选的私有 attestation，不会留下看似可发布的候选目录。
 

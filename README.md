@@ -53,25 +53,18 @@
 
 ### 安装命令行
 
-本项目目前通过 GitHub 源码分发。正式使用时，请从 [GitHub Releases](https://github.com/wildbyteai/feishu-digital-twin/releases) 下载并解压需要的版本；如需查看最新开发代码，可以克隆 `main`：
+稳定版本以不可变 Git 标签为准，不依赖 GitHub Release 页面。最简单的方式是把下面这句话发给 Agent：
+
+> 请从 `wildbyteai/feishu-digital-twin` 的最新稳定 Git 标签安装，阅读仓库 README 后完成 `setup`、`doctor` 和 `status`；遇到飞书授权、生产数据确认或创建资源时先向我确认。
+
+也可以不做全局安装，直接用 `npx` 运行固定的稳定版本：
 
 ```bash
-git clone --depth 1 https://github.com/wildbyteai/feishu-digital-twin.git
-cd feishu-digital-twin
+npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 --help
+npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup --help
 ```
 
-进入源码目录后，将 CLI 安装到全局。完整配置和后台服务使用这种方式：
-
-```bash
-npm install --global .
-feishu-digital-twin --help
-```
-
-只需查看 CLI 帮助或调试源码时，可以不安装，直接在源码目录运行入口文件：
-
-```bash
-node bin/feishu-digital-twin.mjs --help
-```
+完整配置和后台服务由 `setup` 安装到本机私有版本目录。后续管理仍可交给 Agent，或继续用同一稳定标签运行相应命令。
 
 ## setup 会自动做什么
 
@@ -95,7 +88,7 @@ node bin/feishu-digital-twin.mjs --help
 先运行下面的命令即可直接看到 Base 首装模板、初始值和验收步骤：
 
 ```bash
-feishu-digital-twin setup --help
+npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup --help
 ```
 
 需要区分一个日常开关和三个部署确认：
@@ -107,7 +100,7 @@ feishu-digital-twin setup --help
 | `--approve-message-scope` | 确认首次使用或扩大 `internal_visible` / `all_visible` | 只有扩大消息可见范围时使用 |
 | `--create-missing-resources` | 明确批准创建缺失的 Base、控制表、Wiki 空间或 Drive 日报目录 | 没有现成控制 Base 时，普通完整安装必须使用 |
 
-使用 Base 控制台时，运行配置表只保留一条记录。推荐初始值为：可选的 `名称=默认配置`、`数字分身启用=未勾选`、`允许域=继承`、`个性化规则=空或自然语言规则`；群级规则中的 `群名称` 也只是可选展示字段。旧字段 `生产执行` 仅用于兼容已有部署，新安装统一使用 `数字分身启用`。setup 成功但总开关仍关闭时，`readiness=safe-but-disabled` 是正常状态；确认身份、权限和后台服务均正常后，勾选 `数字分身启用`，最长等待约 10 秒，再运行 `feishu-digital-twin status`，应看到 `readiness=ready`。
+使用 Base 控制台时，运行配置表只保留一条记录。推荐初始值为：可选的 `名称=默认配置`、`数字分身启用=未勾选`、`允许域=继承`、`个性化规则=空或自然语言规则`；群级规则中的 `群名称` 也只是可选展示字段。旧字段 `生产执行` 仅用于兼容已有部署，新安装统一使用 `数字分身启用`。setup 成功但总开关仍关闭时，`readiness=safe-but-disabled` 是正常状态；确认身份、权限和后台服务均正常后，勾选 `数字分身启用`，最长等待约 10 秒，再通过同一稳定标签运行 `status`，应看到 `readiness=ready`。
 
 ## 功能与所需权限
 
@@ -147,7 +140,7 @@ Bot 缺少 scope 时在飞书开发者后台处理；User 缺少 scope 时只对
 只处理 Bot 官方可见的实时消息，不需要 Wiki 或日报文件夹；Base 控制台仍是强制配置。没有现成 Base 时让 setup 自动创建：
 
 ```bash
-feishu-digital-twin setup \
+npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
   --profile <lark-cli-profile> \
   --timezone Asia/Shanghai \
   --codex-environment-root <private-codex-environment> \
@@ -161,7 +154,7 @@ feishu-digital-twin setup \
 读取企业内部群聊和私聊时使用 `internal_visible`；确实需要包括外部群时才使用 `all_visible`：
 
 ```bash
-feishu-digital-twin setup \
+npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
   --profile <lark-cli-profile> \
   --timezone Asia/Shanghai \
   --codex-environment-root <private-codex-environment> \
@@ -179,7 +172,7 @@ feishu-digital-twin setup \
 最简单的完整能力路径是直接让 setup 用官方 CLI 创建全部缺失资源。自动发现的知识空间路由会写入新 Base 的“个性化规则”，最终不保留第二套本机规则源：
 
 ```bash
-feishu-digital-twin setup \
+npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
   --profile <lark-cli-profile> \
   --timezone Asia/Shanghai \
   --codex-environment-root <private-codex-environment> \
@@ -197,7 +190,7 @@ feishu-digital-twin setup \
 如果已经有符合[飞书 Base 控制台](./docs/feishu-console.md)结构的 Base，可以直接传入稳定引用。运行配置表必须包含且只包含一条有效运行记录；群级规则表可以没有记录，但两张表都必须具备文档列出的全部字段。“允许域”只能使用严格的“继承”或本机上限内的非空域列表。已有 Base 只读验真，不会被 setup 擅自改造；知识空间路由继续在 Base 规则中维护，日报目录可以传入已有资源：
 
 ```bash
-feishu-digital-twin setup \
+npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
   --profile <lark-cli-profile> \
   --timezone Asia/Shanghai \
   --codex-environment-root <private-codex-environment> \
@@ -217,8 +210,8 @@ feishu-digital-twin setup \
 ## 安装后验收
 
 ```bash
-feishu-digital-twin doctor
-feishu-digital-twin status
+npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 doctor
+npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 status
 ```
 
 正常启用时应同时满足：
@@ -231,15 +224,15 @@ feishu-digital-twin status
 - 私有配置位于 Git 工作区之外，文件权限仅当前用户可读；
 - 实际消息、任务、日历、知识检索和日报能力与所选权限一致。
 
-`readiness=degraded` 表示安装未完成，不应开始自动处理。运行中升级必须同时提供 `--source` 和 `--restart`，运行中回退必须提供 `--restart`；同版本号不会覆盖已经安装的文件。常用运维命令：
+`readiness=degraded` 表示安装未完成，不应开始自动处理。升级时直接运行目标稳定标签并添加 `--restart`；回退也必须添加 `--restart`。同版本号不会覆盖已经安装的文件。常用运维命令：
 
 ```bash
-feishu-digital-twin status
-feishu-digital-twin control freeze
-feishu-digital-twin control enable
-feishu-digital-twin control upgrade --source <absolute-new-release-tree> --restart
-feishu-digital-twin control rollback --restart
-feishu-digital-twin control uninstall
+npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 status
+npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 control freeze
+npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 control enable
+npx --yes "github:wildbyteai/feishu-digital-twin#<target-tag>" control upgrade --restart
+npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 control rollback --restart
+npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 control uninstall
 ```
 
 完整说明见[后台运行与维护](./docs/operations/runtime.md)。卸载默认保留本机私有数据。

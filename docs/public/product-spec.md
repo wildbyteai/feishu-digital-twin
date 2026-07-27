@@ -49,7 +49,7 @@ Status: implementation
 
 ## 三层数据边界
 
-### 公开源码和发行包
+### 公开源码和本地验证产物
 
 - 插件 manifest、Skills 和控制命令；
 - intake、runtime、executor 和 shared；
@@ -109,15 +109,15 @@ Base 运行表必须包含“允许域”字段：值严格为“继承”时使
 
 其他授权内事项由 AI 根据自然语言规则处理。确实缺少会改变承诺的关键事实时，AI 应直接在飞书发言中给出建议并请求主体用户确认，不建设第二套审批系统。
 
-## 公共快照与发布
+## 公共快照与标签分发
 
 当前私有 Git 历史不得直接公开。公共源码从审核后的精确文件允许清单生成，不复制 `.git`、内部工作记录、本机运行态、私有 Overlay、日志、SQLite、`*.privacy-key`、二维码和真实验收证据。
 
 公共快照在源文件、暂存树、解包归档和候选元数据阶段执行 Secret、PII、私有域名、本机路径和真实平台标识扫描。任何发现、来源缺失、脏文件或路径越界都必须失败关闭，且不能留下看似成功的候选。
 
-CI 已使用只读默认权限和完整 commit SHA，运行格式检查、公共快照策略、通用 Secret/PII 扫描、完整合成测试、真实 npm package lifecycle 测试和 npm 文件清单；REUSE、CodeQL、Dependency Review、Dependabot 与 Scorecard 已配置为在公共仓启用。正式候选已生成确定性 SPDX 2.3、本地未签名 in-toto/SLSA 来源记录，并通过 REUSE、只读一致性校验、源码归档完整测试、Codex 官方插件隔离安装和 npm 离线安装闭环，确认三种发行物来自同一版本与同一允许文件集合。公开发布时仍必须在真实公共仓对最终产物生成 GitHub/Sigstore 签名 attestation。
+CI 已使用只读默认权限和完整 commit SHA，运行格式检查、公共快照策略、通用 Secret/PII 扫描、完整合成测试、真实 npm package lifecycle 测试和 npm 文件清单；REUSE、CodeQL、Dependency Review、Dependabot 与 Scorecard 已在公共仓启用。本地候选生成确定性 SPDX 2.3 和未签名 in-toto/SLSA 来源记录，并通过 REUSE、只读一致性校验、源码归档完整测试、Codex 官方插件隔离安装和 npm 离线安装闭环，确认本地验证产物来自同一版本与同一允许文件集合。它们不作为独立公共下载渠道。
 
-最终候选必须在全新的非生产飞书租户中完成独立安装、完整能力、升级回退和卸载复现。公共仓、GitHub Release、Marketplace、npm 和公共目录均属于外部动作，必须在 Go/No-Go 后逐项取得明确授权再执行。
+稳定版本只通过公共源码仓和不可变 Git 标签交付。用户可以交给 Agent 安装，或通过固定标签的 `npx` 命令运行；不创建 GitHub Release，也不发布 Codex Marketplace 或 npm registry。标签必须指向已通过主干必需检查的合并提交。
 
 ## 开箱即用验收
 
@@ -127,9 +127,19 @@ CI 已使用只读默认权限和完整 commit SHA，运行格式检查、公共
 2. 启用 Codex；
 3. 完成全局配置。
 
-公开主入口为 `feishu-digital-twin setup --profile ... --timezone ... --codex-environment-root ... --approve-production-data`，普通用户无需预写 JSON，`lark-cli` 和 Codex 默认从 `PATH` 发现。省略 profile 时只读枚举：唯一 profile 自动选择，多个则要求明确指定。非 `bot_only` 或扩大已有消息范围时再追加 `--message-scope ... --approve-message-scope`；普通用户用 `--capabilities` 选择产品能力并生成最小业务域，高级用户才用 `--domains` 覆盖。Base 控制台及“运行配置”“群级规则”两张表是普通完整安装的强制配置：部署者可以提供已有资源，或在 setup 列出缺失项后添加 `--create-missing-resources`，由 setup 编排官方 user 身份 CLI 的精确名称发现、`--dry-run`、Base/控制表/安全初始记录创建和读回验证。企业知识或每日记忆没有稳定资源引用时，同一开关创建对应知识空间或日报目录。自动创建只建立项目所需资源和初始结构，不管理成员、分享范围或高级权限。高级用户仍可使用 `setup --config ...`，但不得与自动创建开关混用。安装器负责按需初始化、配置或安全更新，收口飞书 user/bot 授权验证、Codex 结构化输出、消息范围与数据边界确认、本机权限、后台服务安装和真实状态读回；所有步骤成功后才解除冻结。重复执行会收敛；本机失败恢复进入 setup 前的配置、冻结和服务状态，已成功创建的飞书资源保留并在重试时精确复用，不得静默开始真实回复或业务写入。
+公开主入口为：
 
-截至 2026 年 7 月 27 日，统一 `setup`、声明式配置、三档消息范围、强制控制 Base、知识与日报目标、缺资源结构化提示、官方 CLI 引导式创建、Doctor、服务管理、发行物构建、隐私扫描、SBOM、来源记录和公共仓均已实现。目标长期运行实例已完成版本切换后的 Doctor、后台服务、连续性、单应用单消费者和冻结/恢复验收；此前同一运行实现的 Bot/主体用户双身份回复和每日工作记忆真人证据保持有效。三档消息范围的真实租户独立复现仍按发布任务清单执行，不在此处提前声明完成。本次改动只增加 setup 的薄编排，不新增运行时业务代码：Base 与控制表使用官方 Base 命令，知识空间使用官方 `wiki +space-create`，日报目录使用官方 `drive +create-folder`，创建前 dry-run、创建后读回，ID/token 只进入本机私有配置。项目仍不建设第二套创建 API、工作流引擎、动作目录或长期聊天库。
+```bash
+npx --yes "github:wildbyteai/feishu-digital-twin#<stable-tag>" setup \
+  --profile ... \
+  --timezone ... \
+  --codex-environment-root ... \
+  --approve-production-data
+```
+
+普通用户无需预写 JSON，`lark-cli` 和 Codex 默认从 `PATH` 发现。省略 profile 时只读枚举：唯一 profile 自动选择，多个则要求明确指定。非 `bot_only` 或扩大已有消息范围时再追加 `--message-scope ... --approve-message-scope`；普通用户用 `--capabilities` 选择产品能力并生成最小业务域，高级用户才用 `--domains` 覆盖。Base 控制台及“运行配置”“群级规则”两张表是普通完整安装的强制配置：部署者可以提供已有资源，或在 setup 列出缺失项后添加 `--create-missing-resources`，由 setup 编排官方 user 身份 CLI 的精确名称发现、`--dry-run`、Base/控制表/安全初始记录创建和读回验证。企业知识或每日记忆没有稳定资源引用时，同一开关创建对应知识空间或日报目录。自动创建只建立项目所需资源和初始结构，不管理成员、分享范围或高级权限。高级用户仍可使用 `setup --config ...`，但不得与自动创建开关混用。安装器负责按需初始化、配置或安全更新，收口飞书 user/bot 授权验证、Codex 结构化输出、消息范围与数据边界确认、本机权限、后台服务安装和真实状态读回；所有步骤成功后才解除冻结。重复执行会收敛；本机失败恢复进入 setup 前的配置、冻结和服务状态，已成功创建的飞书资源保留并在重试时精确复用，不得静默开始真实回复或业务写入。
+
+截至 2026 年 7 月 27 日，统一 `setup`、声明式配置、三档消息范围、强制控制 Base、知识与日报目标、缺资源结构化提示、官方 CLI 引导式创建、Doctor、服务管理、本地发行物验证、隐私扫描、SBOM、来源记录和公共仓均已实现。目标长期运行实例已完成版本切换后的 Doctor、后台服务、连续性、单应用单消费者和冻结/恢复验收；此前同一运行实现的 Bot/主体用户双身份回复和每日工作记忆真人证据保持有效。当前阶段冻结新增功能，只处理安全问题和阻断稳定运行的缺陷。Base 与控制表使用官方 Base 命令，知识空间使用官方 `wiki +space-create`，日报目录使用官方 `drive +create-folder`，创建前 dry-run、创建后读回，ID/token 只进入本机私有配置。项目仍不建设第二套创建 API、工作流引擎、动作目录或长期聊天库。
 
 ## 不在范围内
 
@@ -143,7 +153,7 @@ CI 已使用只读默认权限和完整 commit SHA，运行格式检查、公共
 ## 完成标准
 
 - 公共候选无法还原真实个人、租户、群、资源、业务正文或运行环境；
-- 公开源码、插件包和 npm 包包含完整稳定功能且版本一致；
+- 公开源码包含完整稳定功能，本地插件包和 npm tarball 与源码版本一致；
 - 全部自动化测试只使用合成数据和 Fake 适配器；
 - 干净环境可以完成真实飞书接入、后台运行、恢复、升级、回退和卸载；
 - 用户可见 stdout/stderr、持久日志、SQLite、CI 日志和所有发行物通过隐私回归检查；内部消息 IPC 只能短期传递当前事件，不能落盘或回显；

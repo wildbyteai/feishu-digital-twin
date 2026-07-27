@@ -1,6 +1,6 @@
 # 外部依赖与供应链台账
 
-本项目的稳定边界是“Codex 负责 AI 决策，飞书官方组件负责平台能力，伴随运行时只补不可替代的安全接线”。当前 npm 包没有 `dependencies`、`optionalDependencies` 或 `peerDependencies`，运行时代码只使用 Node.js 内置模块。
+本项目的稳定边界是“Codex 负责 AI 决策，飞书官方组件负责平台能力，伴随运行时只补不可替代的安全接线”。本地 npm tarball 验证产物没有 `dependencies`、`optionalDependencies` 或 `peerDependencies`，运行时代码只使用 Node.js 内置模块；`package.json` 使用 `private: true` 防止误发布到 npm registry。
 
 ## 运行依赖
 

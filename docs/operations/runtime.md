@@ -15,12 +15,12 @@
 ## 状态与日常控制
 
 ```bash
-feishu-digital-twin status
-feishu-digital-twin control enable
-feishu-digital-twin control freeze
-feishu-digital-twin control upgrade --source <absolute-new-release-tree> --restart
-feishu-digital-twin control rollback --restart
-feishu-digital-twin control uninstall
+npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 status
+npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 control enable
+npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 control freeze
+npx --yes "github:wildbyteai/feishu-digital-twin#<target-tag>" control upgrade --restart
+npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 control rollback --restart
+npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 control uninstall
 ```
 
 `status` 的用户级结论：
@@ -39,19 +39,14 @@ feishu-digital-twin control uninstall
 
 ## 升级、回退和卸载
 
-新发行树从同一版本的正式 Release 候选取得，不从当前运行实例或 Marketplace 缓存拼装。下载该版本的完整候选目录（`source.tar`、`codex-plugin.tar`、`npm-package.tgz`、SBOM、来源记录、`snapshot-manifest.json` 和 `SHA256SUMS`），验证发布页上的签名 attestation 后，再在一个新的空目录中解包和执行候选自验：
+升级只使用仓库的不可变 Git 标签，不依赖 GitHub Release、npm 或 Marketplace。先确认目标标签和版本号，再直接让该标签提供升级源码：
 
 ```bash
-CANDIDATE=<absolute-downloaded-candidate-directory>
-mkdir "$CANDIDATE/tree"
-tar -xf "$CANDIDATE/source.tar" -C "$CANDIDATE/tree"
-(cd "$CANDIDATE" && shasum -a 256 -c SHA256SUMS)
-node "$CANDIDATE/tree/bin/twin-public-snapshot.mjs" verify "$CANDIDATE"
+npx --yes "github:wildbyteai/feishu-digital-twin#<target-tag>" --version
+npx --yes "github:wildbyteai/feishu-digital-twin#<target-tag>" control upgrade --restart
 ```
 
-只有上述两类验证都通过时，`$CANDIDATE/tree` 才是可交给 `--source` 的新发行树；完整候选布局和自验边界见[公共快照与隐私门](./public-snapshot.md)。
-
-升级会先把新版本复制到独立目录，验证包结构、配置兼容、Doctor 和服务后再切换当前版本。失败时恢复上一已验证版本和原服务状态。后台服务已加载时，升级和回退必须使用 `--restart` 完成受控切换；通过当前已安装实例执行升级时，`--source` 必须指向绝对路径下、版本号不同的已验证新发行树。同一版本号视为不可变，命令返回 `status=unchanged`，不会覆盖已安装文件。
+升级会先把目标标签对应的版本复制到独立目录，验证包结构、配置兼容、Doctor 和服务后再切换当前版本。失败时恢复上一已验证版本和原服务状态。后台服务已加载时，升级和回退必须使用 `--restart` 完成受控切换。同一版本号视为不可变，命令返回 `status=unchanged`，不会覆盖已安装文件。公共快照仍用于维护者进行源码与隐私门禁检查，但不是用户安装前置条件。
 
 卸载默认移除服务和版本化运行时，但保留私有配置、状态和审计所需的脱敏结果。`--purge` 会删除私有数据，执行前必须确认已经完成必要备份且不再需要恢复。
 
