@@ -130,6 +130,7 @@ test("公共快照清单覆盖现有完整产品面且排除私有区域", () =>
     "LICENSE",
     "LICENSES/Apache-2.0.txt",
     "NOTICE",
+    "README.en.md",
     "README.md",
     "REUSE.toml",
     "SECURITY.md",

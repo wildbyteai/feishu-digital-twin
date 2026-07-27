@@ -57,6 +57,65 @@ test("base 模式只使用 Base 开关与规则且不回退到本机规则", asy
   assert.deepEqual(config.group_rules, []);
 });
 
+test("base 模式分页读取超过 200 条群级规则", async () => {
+  const groupRows = Array.from({ length: 201 }, (_, index) => [
+    true,
+    `oc_group_${index + 1}`,
+    `规则 ${index + 1}`
+  ]);
+  const groupOffsets = [];
+  const config = await loadBaseConsole({
+    profile: "example_profile",
+    control: { mode: "base" },
+    allowed_lark_domains: ["im"],
+    console: {
+      base_token: "base_x",
+      runtime_table: "运行配置",
+      group_rules_table: "群级规则"
+    }
+  }, {
+    runner: async (argv) => {
+      const table = argv[argv.indexOf("--table-id") + 1];
+      const offset = Number(argv[argv.indexOf("--offset") + 1]);
+      if (table === "运行配置") {
+        return {
+          exit_code: 0,
+          stdout: JSON.stringify({
+            ok: true,
+            data: {
+              fields: ["数字分身启用", "允许域", "个性化规则"],
+              data: [[true, "继承", ""]],
+              has_more: false
+            }
+          }),
+          stderr: ""
+        };
+      }
+      groupOffsets.push(offset);
+      const data = groupRows.slice(offset, offset + 200);
+      return {
+        exit_code: 0,
+        stdout: JSON.stringify({
+          ok: true,
+          data: {
+            fields: ["启用", "群ID", "个性化规则"],
+            data,
+            has_more: offset + data.length < groupRows.length
+          }
+        }),
+        stderr: ""
+      };
+    }
+  });
+
+  assert.deepEqual(groupOffsets, [0, 200]);
+  assert.equal(config.group_rules.length, 201);
+  assert.deepEqual(config.group_rules.at(-1), {
+    chat_id: "oc_group_201",
+    rules: ["规则 201"]
+  });
+});
+
 test("飞书 Base 规则保持自然语言，允许域只能收紧本机权限上限", async () => {
   const calls = [];
   const config = await loadBaseConsole({

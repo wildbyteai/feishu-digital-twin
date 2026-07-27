@@ -2,554 +2,143 @@
   "schema_version": 1,
   "archive_prefix": "feishu-digital-twin",
   "files": [
-    {
-      "path": ".codex-plugin/plugin.json",
-      "provenance": "project"
-    },
-    {
-      "path": ".github/CODEOWNERS.example",
-      "provenance": "project"
-    },
-    {
-      "path": ".github/dependabot.yml",
-      "provenance": "project"
-    },
-    {
-      "path": ".github/ISSUE_TEMPLATE/bug_report.yml",
-      "provenance": "project"
-    },
-    {
-      "path": ".github/ISSUE_TEMPLATE/config.yml",
-      "provenance": "project"
-    },
-    {
-      "path": ".github/ISSUE_TEMPLATE/feature_request.yml",
-      "provenance": "project"
-    },
-    {
-      "path": ".github/pull_request_template.md",
-      "provenance": "project"
-    },
-    {
-      "path": ".github/workflows/ci.yml",
-      "provenance": "project"
-    },
-    {
-      "path": ".github/workflows/codeql.yml",
-      "provenance": "project"
-    },
-    {
-      "path": ".github/workflows/dependency-review.yml",
-      "provenance": "project"
-    },
-    {
-      "path": ".github/workflows/scorecard.yml",
-      "provenance": "project"
-    },
-    {
-      "path": ".gitignore",
-      "provenance": "project"
-    },
-    {
-      "path": "bin/feishu-digital-twin-supervisor.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "bin/feishu-digital-twin.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "bin/run-isolated-tests.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "bin/supervisor-core.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "bin/twin-continuity.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "bin/twin-public-content-scan.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "bin/twin-public-snapshot.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "CODE_OF_CONDUCT.md",
-      "provenance": "project"
-    },
-    {
-      "path": "config.example.json",
-      "provenance": "project"
-    },
-    {
-      "path": "config.full.example.json",
-      "provenance": "project"
-    },
-    {
-      "path": "continuity.example.json",
-      "provenance": "project"
-    },
-    {
-      "path": "CONTRIBUTING.md",
-      "provenance": "project"
-    },
-    {
-      "path": "deploy/launchd/daily-memory.plist.template",
-      "provenance": "project"
-    },
-    {
-      "path": "deploy/launchd/realtime.plist.template",
-      "provenance": "project"
-    },
-    {
-      "path": "deploy/launchd/supplement.plist.template",
-      "provenance": "project"
-    },
-    {
-      "path": "docs/adr/0001-ai-first-and-official-components.md",
-      "provenance": "project"
-    },
-    {
-      "path": "docs/adr/0004-coverage-source-and-production-boundaries.md",
-      "provenance": "project"
-    },
-    {
-      "path": "docs/adr/0005-full-feature-public-product.md",
-      "provenance": "project"
-    },
-    {
-      "path": "docs/adr/0006-provider-neutral-inference.md",
-      "provenance": "project"
-    },
-    {
-      "path": "docs/compatibility.md",
-      "provenance": "project"
-    },
-    {
-      "path": "docs/dependencies.md",
-      "provenance": "project"
-    },
-    {
-      "path": "docs/features/daily-memory.md",
-      "provenance": "project"
-    },
-    {
-      "path": "docs/features/enterprise-knowledge.md",
-      "provenance": "project"
-    },
-    {
-      "path": "docs/feishu-console.md",
-      "provenance": "project"
-    },
-    {
-      "path": "docs/getting-started/codex.md",
-      "provenance": "project"
-    },
-    {
-      "path": "docs/getting-started/feishu-cli.md",
-      "provenance": "project"
-    },
-    {
-      "path": "docs/getting-started/global-configuration.md",
-      "provenance": "project"
-    },
-    {
-      "path": "docs/operations/local-service-continuity.md",
-      "provenance": "project"
-    },
-    {
-      "path": "docs/operations/public-snapshot.md",
-      "provenance": "project"
-    },
-    {
-      "path": "docs/operations/runtime.md",
-      "provenance": "project"
-    },
-    {
-      "path": "docs/public/open-source-plan.md",
-      "provenance": "project"
-    },
-    {
-      "path": "docs/public/product-spec.md",
-      "provenance": "project"
-    },
-    {
-      "path": "docs/public/README.md",
-      "provenance": "project"
-    },
-    {
-      "path": "docs/reference/configuration.md",
-      "provenance": "project"
-    },
-    {
-      "path": "docs/reference/feishu-permissions.md",
-      "provenance": "project"
-    },
-    {
-      "path": "docs/security/privacy.md",
-      "provenance": "project"
-    },
-    {
-      "path": "executor/src/lark-guard.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "GOVERNANCE.md",
-      "provenance": "project"
-    },
-    {
-      "path": "intake/bin/feishu-digital-twin-intake.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "intake/src/candidate-hydrator.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "intake/src/context-policy.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "intake/src/inbound-normalizer.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "intake/src/intake-command.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "intake/src/lark-event-source.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "intake/src/lark-im-reader.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "intake/src/ndjson-output.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "LICENSE",
-      "provenance": "project"
-    },
-    {
-      "path": "LICENSES/Apache-2.0.txt",
-      "provenance": "project"
-    },
-    {
-      "path": "NOTICE",
-      "provenance": "project"
-    },
-    {
-      "path": "ops/continuity-exercise.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "ops/continuity-gate.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "ops/isolated-test-environment.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "ops/local-continuity.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "ops/public-content-scan.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "ops/public-snapshot.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "ops/service-result-log.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "package.json",
-      "provenance": "project"
-    },
-    {
-      "path": "product/src/cli.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "product/src/installation.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "product/src/service-host.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "README.en.md",
-      "provenance": "project"
-    },
-    {
-      "path": "README.md",
-      "provenance": "project"
-    },
-    {
-      "path": "release/public-snapshot-private-policy.example.json",
-      "provenance": "project"
-    },
-    {
-      "path": "release/public-snapshot.example.json",
-      "provenance": "project"
-    },
-    {
-      "path": "REUSE.toml",
-      "provenance": "project"
-    },
-    {
-      "path": "runtime/bin/feishu-digital-twin-runtime.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "runtime/bin/runtime-command.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "runtime/README.md",
-      "provenance": "project"
-    },
-    {
-      "path": "runtime/schemas/codex-decision.schema.json",
-      "provenance": "project"
-    },
-    {
-      "path": "runtime/schemas/instance-config.schema.json",
-      "provenance": "project"
-    },
-    {
-      "path": "runtime/src/base-console.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "runtime/src/codex-runner.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "runtime/src/config-loader.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "runtime/src/confirmation-channel.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "runtime/src/daily-memory-postcondition.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "runtime/src/daily-memory-privacy.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "runtime/src/decision-diagnostics.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "runtime/src/inference-adapter.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "runtime/src/privacy-projection.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "runtime/src/process-event.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "runtime/src/prompt.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "runtime/src/result-summary.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "runtime/src/runtime-health-snapshot.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "runtime/src/runtime-state.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "runtime/src/service.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "runtime/src/twin-runtime.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "SECURITY.md",
-      "provenance": "project"
-    },
-    {
-      "path": "shared/authority-labels.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "shared/daily-memory-trigger.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "shared/lark-capability-catalog.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "shared/subprocess-environment.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "skills/feishu-daily-work-memory/agents/openai.yaml",
-      "provenance": "project"
-    },
-    {
-      "path": "skills/feishu-daily-work-memory/SKILL.md",
-      "provenance": "project"
-    },
-    {
-      "path": "skills/feishu-digital-twin-control/SKILL.md",
-      "provenance": "project"
-    },
-    {
-      "path": "skills/feishu-digital-twin/agents/openai.yaml",
-      "provenance": "project"
-    },
-    {
-      "path": "skills/feishu-digital-twin/SKILL.md",
-      "provenance": "project"
-    },
-    {
-      "path": "tests/fixtures/bin/codex",
-      "provenance": "synthetic"
-    },
-    {
-      "path": "tests/fixtures/bin/lark-cli-event",
-      "provenance": "synthetic"
-    },
-    {
-      "path": "tests/fixtures/bin/lark-cli-read",
-      "provenance": "synthetic"
-    },
-    {
-      "path": "tests/runtime/base-console-v2.test.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "tests/runtime/codex-runner-v2.test.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "tests/runtime/config-loader-v2.test.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "tests/runtime/continuity-v2.test.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "tests/runtime/daily-memory-privacy-v2.test.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "tests/runtime/daily-memory-v2.test.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "tests/runtime/inference-adapter-v2.test.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "tests/runtime/intake-process-v2.test.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "tests/runtime/intake-v2.test.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "tests/runtime/knowledge-routing-v2.test.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "tests/runtime/lark-event-source-v2.test.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "tests/runtime/lark-guard-v2.test.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "tests/runtime/privacy-projection-v2.test.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "tests/runtime/process-event-v2.test.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "tests/runtime/product-cli-v2.test.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "tests/runtime/prompt-projection-v2.test.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "tests/runtime/public-documentation-v2.test.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "tests/runtime/public-release-artifacts-v2.test.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "tests/runtime/public-snapshot-v2.test.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "tests/runtime/result-summary-v2.test.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "tests/runtime/runtime-entry-v2.test.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "tests/runtime/runtime-state-v2.test.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "tests/runtime/service-result-log-v2.test.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "tests/runtime/supervisor-v2.test.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "tests/runtime/twin-runtime-v2.test.mjs",
-      "provenance": "project"
-    },
-    {
-      "path": "tests/runtime/twin-service-v2.test.mjs",
-      "provenance": "project"
-    }
+    { "path": ".codex-plugin/plugin.json", "provenance": "project" },
+    { "path": ".github/CODEOWNERS.example", "provenance": "project" },
+    { "path": ".github/dependabot.yml", "provenance": "project" },
+    { "path": ".github/ISSUE_TEMPLATE/bug_report.yml", "provenance": "project" },
+    { "path": ".github/ISSUE_TEMPLATE/config.yml", "provenance": "project" },
+    { "path": ".github/ISSUE_TEMPLATE/feature_request.yml", "provenance": "project" },
+    { "path": ".github/pull_request_template.md", "provenance": "project" },
+    { "path": ".github/workflows/ci.yml", "provenance": "project" },
+    { "path": ".github/workflows/codeql.yml", "provenance": "project" },
+    { "path": ".github/workflows/dependency-review.yml", "provenance": "project" },
+    { "path": ".github/workflows/scorecard.yml", "provenance": "project" },
+    { "path": ".gitignore", "provenance": "project" },
+    { "path": "bin/feishu-digital-twin-supervisor.mjs", "provenance": "project" },
+    { "path": "bin/feishu-digital-twin.mjs", "provenance": "project" },
+    { "path": "bin/run-isolated-tests.mjs", "provenance": "project" },
+    { "path": "bin/supervisor-core.mjs", "provenance": "project" },
+    { "path": "bin/twin-continuity.mjs", "provenance": "project" },
+    { "path": "bin/twin-public-content-scan.mjs", "provenance": "project" },
+    { "path": "bin/twin-public-snapshot.mjs", "provenance": "project" },
+    { "path": "CODE_OF_CONDUCT.md", "provenance": "project" },
+    { "path": "config.example.json", "provenance": "project" },
+    { "path": "config.full.example.json", "provenance": "project" },
+    { "path": "continuity.example.json", "provenance": "project" },
+    { "path": "CONTRIBUTING.md", "provenance": "project" },
+    { "path": "deploy/launchd/daily-memory.plist.template", "provenance": "project" },
+    { "path": "deploy/launchd/realtime.plist.template", "provenance": "project" },
+    { "path": "deploy/launchd/supplement.plist.template", "provenance": "project" },
+    { "path": "docs/adr/0001-ai-first-and-official-components.md", "provenance": "project" },
+    { "path": "docs/adr/0004-coverage-source-and-production-boundaries.md", "provenance": "project" },
+    { "path": "docs/adr/0005-full-feature-public-product.md", "provenance": "project" },
+    { "path": "docs/adr/0006-provider-neutral-inference.md", "provenance": "project" },
+    { "path": "docs/compatibility.md", "provenance": "project" },
+    { "path": "docs/dependencies.md", "provenance": "project" },
+    { "path": "docs/features/daily-memory.md", "provenance": "project" },
+    { "path": "docs/features/enterprise-knowledge.md", "provenance": "project" },
+    { "path": "docs/feishu-console.md", "provenance": "project" },
+    { "path": "docs/getting-started/codex.md", "provenance": "project" },
+    { "path": "docs/getting-started/feishu-cli.md", "provenance": "project" },
+    { "path": "docs/getting-started/global-configuration.md", "provenance": "project" },
+    { "path": "docs/operations/local-service-continuity.md", "provenance": "project" },
+    { "path": "docs/operations/public-snapshot.md", "provenance": "project" },
+    { "path": "docs/operations/runtime.md", "provenance": "project" },
+    { "path": "docs/public/open-source-plan.md", "provenance": "project" },
+    { "path": "docs/public/product-spec.md", "provenance": "project" },
+    { "path": "docs/public/README.md", "provenance": "project" },
+    { "path": "docs/reference/configuration.md", "provenance": "project" },
+    { "path": "docs/reference/feishu-permissions.md", "provenance": "project" },
+    { "path": "docs/security/privacy.md", "provenance": "project" },
+    { "path": "executor/src/lark-guard.mjs", "provenance": "project" },
+    { "path": "GOVERNANCE.md", "provenance": "project" },
+    { "path": "intake/bin/feishu-digital-twin-intake.mjs", "provenance": "project" },
+    { "path": "intake/src/candidate-hydrator.mjs", "provenance": "project" },
+    { "path": "intake/src/context-policy.mjs", "provenance": "project" },
+    { "path": "intake/src/inbound-normalizer.mjs", "provenance": "project" },
+    { "path": "intake/src/intake-command.mjs", "provenance": "project" },
+    { "path": "intake/src/lark-event-source.mjs", "provenance": "project" },
+    { "path": "intake/src/lark-im-reader.mjs", "provenance": "project" },
+    { "path": "intake/src/ndjson-output.mjs", "provenance": "project" },
+    { "path": "LICENSE", "provenance": "project" },
+    { "path": "LICENSES/Apache-2.0.txt", "provenance": "project" },
+    { "path": "NOTICE", "provenance": "project" },
+    { "path": "ops/continuity-exercise.mjs", "provenance": "project" },
+    { "path": "ops/continuity-gate.mjs", "provenance": "project" },
+    { "path": "ops/isolated-test-environment.mjs", "provenance": "project" },
+    { "path": "ops/local-continuity.mjs", "provenance": "project" },
+    { "path": "ops/public-content-scan.mjs", "provenance": "project" },
+    { "path": "ops/public-snapshot.mjs", "provenance": "project" },
+    { "path": "ops/service-result-log.mjs", "provenance": "project" },
+    { "path": "package.json", "provenance": "project" },
+    { "path": "product/src/cli.mjs", "provenance": "project" },
+    { "path": "product/src/installation.mjs", "provenance": "project" },
+    { "path": "product/src/service-host.mjs", "provenance": "project" },
+    { "path": "README.en.md", "provenance": "project" },
+    { "path": "README.md", "provenance": "project" },
+    { "path": "release/public-snapshot-private-policy.example.json", "provenance": "project" },
+    { "path": "release/public-snapshot.example.json", "provenance": "project" },
+    { "path": "REUSE.toml", "provenance": "project" },
+    { "path": "runtime/bin/feishu-digital-twin-runtime.mjs", "provenance": "project" },
+    { "path": "runtime/bin/runtime-command.mjs", "provenance": "project" },
+    { "path": "runtime/README.md", "provenance": "project" },
+    { "path": "runtime/schemas/codex-decision.schema.json", "provenance": "project" },
+    { "path": "runtime/schemas/instance-config.schema.json", "provenance": "project" },
+    { "path": "runtime/src/base-console.mjs", "provenance": "project" },
+    { "path": "runtime/src/codex-runner.mjs", "provenance": "project" },
+    { "path": "runtime/src/config-loader.mjs", "provenance": "project" },
+    { "path": "runtime/src/confirmation-channel.mjs", "provenance": "project" },
+    { "path": "runtime/src/daily-memory-postcondition.mjs", "provenance": "project" },
+    { "path": "runtime/src/daily-memory-privacy.mjs", "provenance": "project" },
+    { "path": "runtime/src/decision-diagnostics.mjs", "provenance": "project" },
+    { "path": "runtime/src/inference-adapter.mjs", "provenance": "project" },
+    { "path": "runtime/src/privacy-projection.mjs", "provenance": "project" },
+    { "path": "runtime/src/process-event.mjs", "provenance": "project" },
+    { "path": "runtime/src/prompt.mjs", "provenance": "project" },
+    { "path": "runtime/src/result-summary.mjs", "provenance": "project" },
+    { "path": "runtime/src/runtime-health-snapshot.mjs", "provenance": "project" },
+    { "path": "runtime/src/runtime-state.mjs", "provenance": "project" },
+    { "path": "runtime/src/service.mjs", "provenance": "project" },
+    { "path": "runtime/src/twin-runtime.mjs", "provenance": "project" },
+    { "path": "SECURITY.md", "provenance": "project" },
+    { "path": "shared/authority-labels.mjs", "provenance": "project" },
+    { "path": "shared/daily-memory-trigger.mjs", "provenance": "project" },
+    { "path": "shared/lark-capability-catalog.mjs", "provenance": "project" },
+    { "path": "shared/subprocess-environment.mjs", "provenance": "project" },
+    { "path": "skills/feishu-daily-work-memory/agents/openai.yaml", "provenance": "project" },
+    { "path": "skills/feishu-daily-work-memory/SKILL.md", "provenance": "project" },
+    { "path": "skills/feishu-digital-twin-control/SKILL.md", "provenance": "project" },
+    { "path": "skills/feishu-digital-twin/agents/openai.yaml", "provenance": "project" },
+    { "path": "skills/feishu-digital-twin/SKILL.md", "provenance": "project" },
+    { "path": "tests/fixtures/bin/codex", "provenance": "synthetic" },
+    { "path": "tests/fixtures/bin/lark-cli-event", "provenance": "synthetic" },
+    { "path": "tests/fixtures/bin/lark-cli-read", "provenance": "synthetic" },
+    { "path": "tests/runtime/base-console-v2.test.mjs", "provenance": "project" },
+    { "path": "tests/runtime/codex-runner-v2.test.mjs", "provenance": "project" },
+    { "path": "tests/runtime/config-loader-v2.test.mjs", "provenance": "project" },
+    { "path": "tests/runtime/continuity-v2.test.mjs", "provenance": "project" },
+    { "path": "tests/runtime/daily-memory-privacy-v2.test.mjs", "provenance": "project" },
+    { "path": "tests/runtime/daily-memory-v2.test.mjs", "provenance": "project" },
+    { "path": "tests/runtime/inference-adapter-v2.test.mjs", "provenance": "project" },
+    { "path": "tests/runtime/intake-process-v2.test.mjs", "provenance": "project" },
+    { "path": "tests/runtime/intake-v2.test.mjs", "provenance": "project" },
+    { "path": "tests/runtime/knowledge-routing-v2.test.mjs", "provenance": "project" },
+    { "path": "tests/runtime/lark-event-source-v2.test.mjs", "provenance": "project" },
+    { "path": "tests/runtime/lark-guard-v2.test.mjs", "provenance": "project" },
+    { "path": "tests/runtime/privacy-projection-v2.test.mjs", "provenance": "project" },
+    { "path": "tests/runtime/process-event-v2.test.mjs", "provenance": "project" },
+    { "path": "tests/runtime/product-cli-v2.test.mjs", "provenance": "project" },
+    { "path": "tests/runtime/prompt-projection-v2.test.mjs", "provenance": "project" },
+    { "path": "tests/runtime/public-documentation-v2.test.mjs", "provenance": "project" },
+    { "path": "tests/runtime/public-release-artifacts-v2.test.mjs", "provenance": "project" },
+    { "path": "tests/runtime/public-snapshot-v2.test.mjs", "provenance": "project" },
+    { "path": "tests/runtime/result-summary-v2.test.mjs", "provenance": "project" },
+    { "path": "tests/runtime/runtime-entry-v2.test.mjs", "provenance": "project" },
+    { "path": "tests/runtime/runtime-state-v2.test.mjs", "provenance": "project" },
+    { "path": "tests/runtime/service-result-log-v2.test.mjs", "provenance": "project" },
+    { "path": "tests/runtime/supervisor-v2.test.mjs", "provenance": "project" },
+    { "path": "tests/runtime/twin-runtime-v2.test.mjs", "provenance": "project" },
+    { "path": "tests/runtime/twin-service-v2.test.mjs", "provenance": "project" }
   ],
   "provenance": {
     "project": {

@@ -14,6 +14,7 @@ path = [
   "LICENSE",
   "LICENSES/**",
   "NOTICE",
+  "README.en.md",
   "README.md",
   "REUSE.toml",
   "SECURITY.md",

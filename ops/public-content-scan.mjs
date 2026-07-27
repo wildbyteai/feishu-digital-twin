@@ -19,6 +19,12 @@ const FEISHU_RESOURCE_URL_PATTERN = /\bhttps?:\/\/(?:[A-Za-z0-9-]+\.)*(?:feishu\
 const PRIVATE_DOMAIN_PATTERN = /\b(?:https?:\/\/)?(?:[A-Za-z0-9-]+\.)+(?:internal|local|lan|corp)(?=[:/\s"'<>]|$)(?::\d+)?(?:\/[^\s"'<>]*)?/giu;
 const CODE_SOURCE_PATH_PATTERN = /\.(?:[cm]?js|jsx|ts|tsx)$/iu;
 const SENSITIVE_PRIVATE_PATH_SUFFIXES = [".privacy-key"];
+const CANDIDATE_METADATA_PATHS = new Set([
+  "SHA256SUMS",
+  "provenance.intoto.jsonl",
+  "sbom.spdx.json",
+  "snapshot-manifest.json"
+]);
 const KNOWN_SECRET_PATTERNS = [
   /\bsk-[A-Za-z0-9_-]{20,}\b/gu,
   /\bgh[pousr]_[A-Za-z0-9]{30,}\b/gu,
@@ -394,7 +400,11 @@ function addFinding(findings, code) {
   if (!findings.some((finding) => finding.code === code)) findings.push({ code });
 }
 
-function scanText(content, policy, relativePath) {
+function withoutSha256Digests(content) {
+  return content.replace(/\b[A-Fa-f0-9]{64}\b/gu, "");
+}
+
+function scanText(content, policy, relativePath, { ignoreSha256DigestIdentifiers = false } = {}) {
   const findings = [];
   const lowered = content.toLowerCase();
   for (const literal of policy.forbidden_literals) {
@@ -406,9 +416,12 @@ function scanText(content, policy, relativePath) {
   for (const match of content.matchAll(EMAIL_PATTERN)) {
     if (match[1]?.toLowerCase() !== "example.invalid") addFinding(findings, "email-address");
   }
-  if (PHONE_PATTERN.test(content)) addFinding(findings, "phone-number");
+  const personalIdentifierContent = ignoreSha256DigestIdentifiers
+    ? withoutSha256Digests(content)
+    : content;
+  if (PHONE_PATTERN.test(personalIdentifierContent)) addFinding(findings, "phone-number");
   PHONE_PATTERN.lastIndex = 0;
-  if (CHINESE_ID_PATTERN.test(content)) addFinding(findings, "chinese-id-number");
+  if (CHINESE_ID_PATTERN.test(personalIdentifierContent)) addFinding(findings, "chinese-id-number");
   CHINESE_ID_PATTERN.lastIndex = 0;
   if (PRIVATE_IPV4_PATTERN.test(content)) addFinding(findings, "private-ip-address");
   PRIVATE_IPV4_PATTERN.lastIndex = 0;
@@ -458,7 +471,7 @@ function sensitivePrivatePath(value) {
   return SENSITIVE_PRIVATE_PATH_SUFFIXES.some((suffix) => lowered.endsWith(suffix));
 }
 
-function scanBuffer(relativePath, buffer, policy, findings) {
+function scanBuffer(relativePath, buffer, policy, findings, stage) {
   if (sensitivePrivatePath(relativePath)) {
     findings.push({ code: "sensitive-private-path", path: relativePath });
   }
@@ -469,7 +482,10 @@ function scanBuffer(relativePath, buffer, policy, findings) {
     findings.push({ code: "non-utf8-content", path: relativePath });
     return;
   }
-  for (const finding of scanText(content, policy, relativePath)) {
+  for (const finding of scanText(content, policy, relativePath, {
+    ignoreSha256DigestIdentifiers: stage === "candidate-metadata" &&
+      CANDIDATE_METADATA_PATHS.has(relativePath)
+  })) {
     findings.push({ ...finding, path: relativePath });
   }
 }
@@ -491,7 +507,7 @@ export async function scanPublicBuffers({ files, policy, stage }) {
       continue;
     }
     bytesScanned += entry.content.length;
-    scanBuffer(relativePath, entry.content, policy, findings);
+    scanBuffer(relativePath, entry.content, policy, findings, stage);
   }
   return {
     scanner_version: SCANNER_VERSION,
@@ -530,7 +546,7 @@ export async function scanPublicFiles({ root, files, policy, stage }) {
       continue;
     }
     bytesScanned += buffer.length;
-    scanBuffer(relativePath, buffer, policy, findings);
+    scanBuffer(relativePath, buffer, policy, findings, stage);
   }
   return {
     scanner_version: SCANNER_VERSION,

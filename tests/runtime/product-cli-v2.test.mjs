@@ -26,7 +26,7 @@ import { runServiceRole } from "../../product/src/service-host.mjs";
 const projectRoot = path.resolve(import.meta.dirname, "../..");
 const cliPath = path.join(projectRoot, "bin/feishu-digital-twin.mjs");
 const fakeCodexFixture = path.join(projectRoot, "tests/fixtures/bin/codex");
-const CURRENT_VERSION = "0.1.9";
+const CURRENT_VERSION = "0.1.11";
 let syntheticInstanceSequence = 0;
 
 function runCli(executable, args, { env = {}, expected = 0 } = {}) {
@@ -71,13 +71,51 @@ function initRoot(instance = `fixture-${process.pid}-${++syntheticInstanceSequen
 }
 
 function fakeLarkCli(directory, {
+  baseCreateExitCode = 0,
+  baseCreated = {
+    app_token: "fixture_auto_console_base",
+    name: "示例发现用户的数字分身控制台"
+  },
+  fixtureCreatedGroupData = [],
+  fixtureCreatedGroupDataAfterWrite = null,
+  baseExistingBases = [],
   baseFailAfter = null,
   baseGroupData = [],
   baseGroupFields = ["启用", "群ID", "个性化规则"],
+  fixtureBaseGroupSchemaFields = [
+    { field_id: "fld_group_name", field_name: "群名称", type: "text" },
+    { field_id: "fld_group_id", field_name: "群ID", type: "text" },
+    { field_id: "fld_group_enabled", field_name: "启用", type: "checkbox" },
+    { field_id: "fld_group_rules", field_name: "个性化规则", type: "text" }
+  ],
   baseRuntimeData = [[true, "继承", ""]],
   baseRuntimeFields = ["数字分身启用", "允许域", "个性化规则"],
+  fixtureBaseRuntimeSchemaFields = [
+    { field_id: "fld_runtime_name", field_name: "名称", type: "text" },
+    { field_id: "fld_runtime_enabled", field_name: "数字分身启用", type: "checkbox" },
+    {
+      field_id: "fld_runtime_domains",
+      field_name: "允许域",
+      type: "select",
+      multiple: true,
+      options: [{ name: "继承" }]
+    },
+    { field_id: "fld_runtime_rules", field_name: "个性化规则", type: "text" }
+  ],
+  baseTables = [
+    { table_id: "tbl_fixture_runtime", table_name: "运行配置" },
+    { table_id: "tbl_fixture_group", table_name: "群级规则" }
+  ],
   botStatus = "available",
+  driveCreateExitCode = 0,
+  driveCreatedFolder = {
+    type: "folder",
+    token: "fixture_auto_daily_memory_folder",
+    name: "示例发现用户的每日工作记忆"
+  },
   driveListExitCode = 0,
+  driveRootFiles = [],
+  driveRootPages = null,
   exitCode = 0,
   includeOk = true,
   malformed = false,
@@ -85,6 +123,15 @@ function fakeLarkCli(directory, {
   tokenStatus = "valid",
   userStatus = "available",
   verified = true,
+  wikiCreateExitCode = 0,
+  wikiCreateMalformedAfterWrite = false,
+  wikiCreatedSpace = {
+    space_id: "fixture_auto_knowledge_space",
+    name: "示例发现用户的数字分身知识库"
+  },
+  wikiAfterCreateAdditionalSpaces = [],
+  wikiCreatedVisibleAfterWrite = true,
+  wikiListExitAfterCreateCode = 0,
   wikiSpaces = [{
     space_id: "fixture_private_space_id",
     name: "fixture_private_knowledge_name"
@@ -93,6 +140,105 @@ function fakeLarkCli(directory, {
   const filename = path.join(directory, "lark-cli");
   const log = path.join(directory, "lark-cli.log");
   const baseCounter = path.join(directory, "lark-base-counter");
+  const baseCreatedMarker = path.join(directory, "lark-base-created");
+  const fixtureBaseGroupRecordMarker = path.join(directory, "lark-base-group-record-created");
+  const fixtureBaseGroupTableMarker = path.join(directory, "lark-base-group-table-created");
+  const fixtureBaseRuntimeRecordMarker = path.join(directory, "lark-base-runtime-record-created");
+  const driveCreatedMarker = path.join(directory, "lark-drive-created");
+  const wikiCreatedMarker = path.join(directory, "lark-wiki-created");
+  const drivePages = driveRootPages ?? [driveRootFiles];
+  const drivePageResponses = (created) => drivePages.map((files, index) => {
+    const lastPage = index === drivePages.length - 1;
+    const pagination = lastPage
+      ? {}
+      : Object.fromEntries([[
+        ["next", "page", "token"].join("_"),
+        `fixture_drive_page_${index + 2}`
+      ]]);
+    return JSON.stringify({
+      ok: true,
+      data: {
+        files: created && lastPage ? [...files, driveCreatedFolder] : files,
+        has_more: !lastPage,
+        ...pagination
+      }
+    });
+  });
+  const driveBeforeCreate = drivePageResponses(false);
+  const driveAfterCreate = drivePageResponses(true);
+  const drivePageCases = (responses) => [
+    ...responses.slice(1).map((response, index) =>
+      `    *fixture_drive_page_${index + 2}*) printf '%s\\n' '${response}' ;;`
+    ),
+    `    *) printf '%s\\n' '${responses[0]}' ;;`
+  ];
+  const wikiBeforeCreate = JSON.stringify({ ok: true, data: { items: wikiSpaces } });
+  const wikiAfterCreate = JSON.stringify({
+    ok: true,
+    data: {
+      items: wikiCreatedVisibleAfterWrite
+        ? [...wikiSpaces, wikiCreatedSpace, ...wikiAfterCreateAdditionalSpaces]
+        : wikiSpaces
+    }
+  });
+  const baseBeforeCreate = JSON.stringify({ ok: true, data: { items: baseExistingBases } });
+  const baseAfterCreate = JSON.stringify({
+    ok: true,
+    data: { items: [...baseExistingBases, baseCreated] }
+  });
+  const baseCreatedTables = [{
+    table_id: "tbl_auto_runtime",
+    table_name: "运行配置"
+  }];
+  const fixtureBaseCreatedTablesWithGroup = [...baseCreatedTables, {
+    table_id: "tbl_auto_group",
+    table_name: "群级规则"
+  }];
+  const runtimeRecordPrinter = [
+    'const fs=require("node:fs")',
+    'const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8"))',
+    'const fields=["名称","数字分身启用","允许域","个性化规则"]',
+    'const row=fields.map((field)=>value[field])',
+    'process.stdout.write(JSON.stringify({ok:true,data:{fields,data:[row]}})+"\\n")'
+  ].join(";");
+  const groupRecordFields = ["群名称", "群ID", "启用", "个性化规则"];
+  const recordPages = (fields, rows) => {
+    const pages = [];
+    for (let offset = 0; offset < rows.length || offset === 0; offset += 200) {
+      const data = rows.slice(offset, offset + 200);
+      pages.push({
+        offset,
+        fields,
+        output: JSON.stringify({
+          ok: true,
+          data: {
+            fields,
+            data,
+            has_more: offset + data.length < rows.length
+          }
+        })
+      });
+      if (offset + 200 >= rows.length) break;
+    }
+    return pages;
+  };
+  const recordPageCases = (pages, indent) => [
+    `${indent}case "$offset" in`,
+    ...pages.map(({ offset, output }) => (
+      `${indent}  ${offset}) printf '%s\\n' '${output}' ;;`
+    )),
+    `${indent}  *) printf '%s\\n' '${JSON.stringify({
+      ok: true,
+      data: { fields: pages[0].fields, data: [], has_more: false }
+    })}' ;;`,
+    `${indent}esac`
+  ];
+  const createdGroupPages = recordPages(groupRecordFields, fixtureCreatedGroupData);
+  const createdGroupPagesAfterWrite = recordPages(
+    groupRecordFields,
+    fixtureCreatedGroupDataAfterWrite ?? fixtureCreatedGroupData
+  );
+  const existingGroupPages = recordPages(baseGroupFields, baseGroupData);
   const response = malformed ? "not-json" : JSON.stringify({
     ...(includeOk ? { ok: exitCode === 0 } : {}),
     verified,
@@ -115,12 +261,50 @@ function fakeLarkCli(directory, {
     `  printf '%s\\n' '${JSON.stringify(profiles)}'`,
     "  exit 0",
     "fi",
-    "if [ \"$3\" = \"base\" ] && [ \"$4\" = \"+record-list\" ]; then",
-    `  base_count=$(grep -c 'base +record-list' '${log}')`,
-    `  printf '%s\\n' "$base_count" > '${baseCounter}'`,
-    ...(baseFailAfter === null ? [] : [
-      `  if [ "$base_count" -gt ${baseFailAfter} ]; then exit 1; fi`
+    "if [ \"$3\" = \"base\" ] && [ \"$4\" = \"+title-resolve\" ]; then",
+    `  if [ -f '${baseCreatedMarker}' ]; then printf '%s\\n' '${baseAfterCreate}'; else printf '%s\\n' '${baseBeforeCreate}'; fi`,
+    "  exit 0",
+    "fi",
+    "if [ \"$3\" = \"base\" ] && [ \"$4\" = \"+base-create\" ]; then",
+    "  case \" $* \" in",
+    `    *" --dry-run "*) printf '%s\\n' '${JSON.stringify({ ok: true, data: { dry_run: true } })}'; exit 0 ;;`,
+    "  esac",
+    ...(baseCreateExitCode === 0 ? [
+      `  printf '%s\\n' 'created' > '${baseCreatedMarker}'`,
+      `  printf '%s\\n' '${JSON.stringify({ ok: true, data: baseCreated })}'`,
+      "  exit 0"
+    ] : [
+      `  printf '%s\\n' '${JSON.stringify({
+        ok: false,
+        error: {
+          type: "authorization",
+          subtype: "missing_scope",
+          missing_scopes: ["base:app:create"]
+        }
+      })}' >&2`,
+      `  exit ${baseCreateExitCode}`
     ]),
+    "fi",
+    "if [ \"$3\" = \"base\" ] && [ \"$4\" = \"+table-list\" ]; then",
+    `  if [ -f '${baseCreatedMarker}' ]; then`,
+    `    if [ -f '${fixtureBaseGroupTableMarker}' ]; then printf '%s\\n' '${JSON.stringify({ ok: true, data: { items: fixtureBaseCreatedTablesWithGroup } })}'; else printf '%s\\n' '${JSON.stringify({ ok: true, data: { items: baseCreatedTables } })}'; fi`,
+    "  else",
+    `    printf '%s\\n' '${JSON.stringify({ ok: true, data: { items: baseTables } })}'`,
+    "  fi",
+    "  exit 0",
+    "fi",
+    "if [ \"$3\" = \"base\" ] && [ \"$4\" = \"+table-create\" ]; then",
+    "  case \" $* \" in",
+    `    *" --dry-run "*) printf '%s\\n' '${JSON.stringify({ ok: true, data: { dry_run: true } })}'; exit 0 ;;`,
+    "  esac",
+    `  printf '%s\\n' 'created' > '${fixtureBaseGroupTableMarker}'`,
+    `  printf '%s\\n' '${JSON.stringify({
+      ok: true,
+      data: { table_id: "tbl_auto_group", table_name: "群级规则" }
+    })}'`,
+    "  exit 0",
+    "fi",
+    "if [ \"$3\" = \"base\" ] && [ \"$4\" = \"+field-list\" ]; then",
     "  table_id=''",
     "  previous=''",
     "  for argument in \"$@\"; do",
@@ -128,24 +312,153 @@ function fakeLarkCli(directory, {
     "    previous=$argument",
     "  done",
     "  case \"$table_id\" in",
-    `    *group*|*群*) printf '%s\\n' '${JSON.stringify({
-      ok: true,
-      data: { fields: baseGroupFields, data: baseGroupData }
-    })}' ;;`,
-    `    *) printf '%s\\n' '${JSON.stringify({
-      ok: true,
-      data: { fields: baseRuntimeFields, data: baseRuntimeData }
-    })}' ;;`,
+    `    *group*|*群*) printf '%s\\n' '${JSON.stringify({ ok: true, data: { items: fixtureBaseGroupSchemaFields } })}' ;;`,
+    `    *) printf '%s\\n' '${JSON.stringify({ ok: true, data: { items: fixtureBaseRuntimeSchemaFields } })}' ;;`,
     "  esac",
     "  exit 0",
     "fi",
-    "if [ \"$3\" = \"wiki\" ] && [ \"$4\" = \"+space-list\" ]; then",
-    `  printf '%s\\n' '${JSON.stringify({ ok: true, data: { items: wikiSpaces } })}'`,
+    "if [ \"$3\" = \"base\" ] && [ \"$4\" = \"+record-upsert\" ]; then",
+    "  case \" $* \" in",
+    `    *" --dry-run "*) printf '%s\\n' '${JSON.stringify({ ok: true, data: { dry_run: true } })}'; exit 0 ;;`,
+    "  esac",
+    "  record_json=''",
+    "  table_id=''",
+    "  previous=''",
+    "  for argument in \"$@\"; do",
+    "    if [ \"$previous\" = \"--json\" ]; then record_json=$argument; break; fi",
+    "    if [ \"$previous\" = \"--table-id\" ]; then table_id=$argument; fi",
+    "    previous=$argument",
+    "  done",
+    "  case \"$table_id\" in",
+    `    *group*|*群*) printf '%s' "$record_json" > '${fixtureBaseGroupRecordMarker}' ;;`,
+    `    *) printf '%s' "$record_json" > '${fixtureBaseRuntimeRecordMarker}' ;;`,
+    "  esac",
+    `  printf '%s\\n' '${JSON.stringify({ ok: true, data: { record_id: "rec_auto_runtime" } })}'`,
     "  exit 0",
+    "fi",
+    "if [ \"$3\" = \"base\" ] && [ \"$4\" = \"+record-list\" ]; then",
+    `  base_count=$(grep -c 'base +record-list' '${log}')`,
+    `  printf '%s\\n' "$base_count" > '${baseCounter}'`,
+    ...(baseFailAfter === null ? [] : [
+      `  if [ "$base_count" -gt ${baseFailAfter} ]; then exit 1; fi`
+    ]),
+    "  table_id=''",
+    "  offset=0",
+    "  previous=''",
+    "  for argument in \"$@\"; do",
+    "    if [ \"$previous\" = \"--table-id\" ]; then table_id=$argument; fi",
+    "    if [ \"$previous\" = \"--offset\" ]; then offset=$argument; fi",
+    "    previous=$argument",
+    "  done",
+    `  if [ -f '${baseCreatedMarker}' ]; then`,
+    "    case \"$table_id\" in",
+    "      *group*|*群*)",
+    ...(fixtureCreatedGroupDataAfterWrite === null ? [
+      ...recordPageCases(createdGroupPages, "        ")
+    ] : [
+      `        if [ -f '${fixtureBaseGroupRecordMarker}' ]; then`,
+      ...recordPageCases(createdGroupPagesAfterWrite, "          "),
+      "        else",
+      ...recordPageCases(createdGroupPages, "          "),
+      "        fi"
+    ]),
+    "        ;;",
+    "      *)",
+    `        if [ -s '${fixtureBaseRuntimeRecordMarker}' ]; then`,
+    `          '${process.execPath}' -e '${runtimeRecordPrinter}' '${fixtureBaseRuntimeRecordMarker}'`,
+    `        else printf '%s\\n' '${JSON.stringify({
+      ok: true,
+      data: {
+        fields: ["名称", "数字分身启用", "允许域", "个性化规则"],
+        data: []
+      }
+    })}'; fi ;;`,
+    "    esac",
+    "  else",
+    "    case \"$table_id\" in",
+    "      *group*|*群*)",
+    ...recordPageCases(existingGroupPages, "        "),
+    "        ;;",
+    `      *) printf '%s\\n' '${JSON.stringify({
+      ok: true,
+      data: { fields: baseRuntimeFields, data: baseRuntimeData }
+    })}' ;;`,
+    "    esac",
+    "  fi",
+    "  exit 0",
+    "fi",
+    "if [ \"$3\" = \"wiki\" ] && [ \"$4\" = \"+space-create\" ]; then",
+    "  case \" $* \" in",
+    `    *" --dry-run "*) printf '%s\\n' '${JSON.stringify({ ok: true, data: { dry_run: true } })}'; exit 0 ;;`,
+    "  esac",
+    ...(wikiCreateExitCode === 0 ? [
+      `  printf '%s\\n' 'created' > '${wikiCreatedMarker}'`,
+      wikiCreateMalformedAfterWrite
+        ? "  printf '%s\\n' 'not-json'"
+        : `  printf '%s\\n' '${JSON.stringify({ ok: true, data: wikiCreatedSpace })}'`,
+      "  exit 0"
+    ] : [
+      `  printf '%s\\n' '${JSON.stringify({
+        ok: false,
+        error: {
+          type: "authorization",
+          subtype: "missing_scope",
+          missing_scopes: ["wiki:space:write_only"]
+        }
+      })}' >&2`,
+      `  exit ${wikiCreateExitCode}`
+    ]),
+    "fi",
+    "if [ \"$3\" = \"wiki\" ] && [ \"$4\" = \"+space-list\" ]; then",
+    `  if [ -f '${wikiCreatedMarker}' ]; then`,
+    ...(wikiListExitAfterCreateCode === 0 ? [
+      `    printf '%s\\n' '${wikiAfterCreate}'`
+    ] : [
+      "    printf '%s\\n' 'read-back-failed' >&2",
+      `    exit ${wikiListExitAfterCreateCode}`
+    ]),
+    "  else",
+    `    printf '%s\\n' '${wikiBeforeCreate}'`,
+    "  fi",
+    "  exit 0",
+    "fi",
+    "if [ \"$3\" = \"drive\" ] && [ \"$4\" = \"+create-folder\" ]; then",
+    "  case \" $* \" in",
+    `    *" --dry-run "*) printf '%s\\n' '${JSON.stringify({ ok: true, data: { dry_run: true } })}'; exit 0 ;;`,
+    "  esac",
+    ...(driveCreateExitCode === 0 ? [
+      `  printf '%s\\n' 'created' > '${driveCreatedMarker}'`,
+      `  printf '%s\\n' '${JSON.stringify({ ok: true, data: driveCreatedFolder })}'`,
+      "  exit 0"
+    ] : [
+      `  printf '%s\\n' '${JSON.stringify({
+        ok: false,
+        error: {
+          type: "authorization",
+          subtype: "missing_scope",
+          missing_scopes: ["drive:drive"]
+        }
+      })}' >&2`,
+      `  exit ${driveCreateExitCode}`
+    ]),
     "fi",
     "if [ \"$3\" = \"drive\" ] && [ \"$4\" = \"files\" ] && [ \"$5\" = \"list\" ]; then",
     ...(driveListExitCode === 0 ? [
-      `  printf '%s\\n' '${JSON.stringify({ ok: true, data: { files: [], has_more: false } })}'`,
+      "  params=''",
+      "  previous=''",
+      "  for argument in \"$@\"; do",
+      "    if [ \"$previous\" = \"--params\" ]; then params=$argument; break; fi",
+      "    previous=$argument",
+      "  done",
+      `  if [ -f '${driveCreatedMarker}' ]; then`,
+      "    case \"$params\" in",
+      ...drivePageCases(driveAfterCreate),
+      "    esac",
+      "  else",
+      "    case \"$params\" in",
+      ...drivePageCases(driveBeforeCreate),
+      "    esac",
+      "  fi",
       "  exit 0"
     ] : [
       `  printf '%s\\n' '${JSON.stringify({
@@ -160,7 +473,17 @@ function fakeLarkCli(directory, {
     ""
   ].join("\n"), { mode: 0o700 });
   chmodSync(filename, 0o700);
-  return { baseCounter, filename, log };
+  return {
+    baseCounter,
+    baseCreatedMarker,
+    fixtureBaseGroupRecordMarker,
+    fixtureBaseGroupTableMarker,
+    fixtureBaseRuntimeRecordMarker,
+    driveCreatedMarker,
+    filename,
+    log,
+    wikiCreatedMarker
+  };
 }
 
 function fakeLaunchctl(directory) {
@@ -299,8 +622,14 @@ function codexFixture({ lark: larkOptions = {} } = {}) {
   return {
     directory,
     larkBaseCounter: larkFixture.baseCounter,
+    larkBaseCreatedMarker: larkFixture.baseCreatedMarker,
+    larkBaseGroupRecordMarker: larkFixture.fixtureBaseGroupRecordMarker,
+    larkBaseGroupTableMarker: larkFixture.fixtureBaseGroupTableMarker,
+    larkBaseRuntimeRecordMarker: larkFixture.fixtureBaseRuntimeRecordMarker,
     larkCli: larkFixture.filename,
     larkLog: larkFixture.log,
+    larkDriveCreatedMarker: larkFixture.driveCreatedMarker,
+    larkWikiCreatedMarker: larkFixture.wikiCreatedMarker,
     codexBin,
     codexEnvironmentRoot
   };
@@ -404,7 +733,7 @@ function versionedSource(version, {
 }
 
 test("公开 CLI 帮助只暴露产品级命令", () => {
-  const result = run(["--help"]);
+  const result = run(["setup", "--help"]);
   assert.match(result.stdout, /init/u);
   assert.match(result.stdout, /setup/u);
   assert.match(result.stdout, /profiles/u);
@@ -434,7 +763,17 @@ test("公开 CLI 帮助只暴露产品级命令", () => {
   assert.match(result.stdout, /--knowledge-direction TEXT/u);
   assert.match(result.stdout, /--daily-memory-folder-token TOKEN/u);
   assert.match(result.stdout, /--daily-memory-folder-name NAME/u);
+  assert.match(result.stdout, /--create-missing-resources/u);
   assert.match(result.stdout, /--approve-message-scope/u);
+  assert.match(result.stdout, /Base control console first setup/u);
+  assert.match(result.stdout, /运行配置.*exactly one row/su);
+  assert.match(result.stdout, /数字分身启用.*only day-to-day master switch/su);
+  assert.match(result.stdout, /允许域.*继承/su);
+  assert.match(result.stdout, /群级规则.*zero or more rows/su);
+  assert.match(result.stdout, /Base control is required for a complete guided setup/u);
+  assert.match(result.stdout, /use --create-missing-resources to create it safely/u);
+  assert.match(result.stdout, /--approve-production-data.*deployment approval/su);
+  assert.match(result.stdout, /--approve-message-scope.*broader message visibility/su);
   assert.doesNotMatch(
     result.stdout,
     /legacy\.private\.service|Private Example Person|private-provider\.example/u
@@ -1279,12 +1618,39 @@ test("setup 幂等收口初始化、配置、Doctor 和健康后台服务", () =
   assert.equal(statSync(path.join(root, "private/config.json")).mode & 0o777, 0o600);
 });
 
-test("setup 无需预写 JSON 即可发现官方双身份并生成最小私有配置", () => {
+test("setup 无需预写 JSON，但完整安装必须先选择或允许创建 Base 控制台", () => {
   const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-setup-")), "install");
+  const tools = codexFixture({ lark: { includeOk: false } });
+  const result = run([
+    "--root", root,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ], {
+    env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` },
+    expected: 1
+  });
+
+  const error = JSON.parse(result.stderr);
+  assert.equal(error.code, "GUIDED_RESOURCE_SELECTION_REQUIRED");
+  assert.deepEqual(error.missing_resources, ["console"]);
+  assert.deepEqual(error.existing_resource_options.console, [
+    "--console-base-token",
+    "--console-runtime-table",
+    "--console-group-rules-table"
+  ]);
+  assert.equal(error.automatic_creation_option, "--create-missing-resources");
+  assert.equal(existsSync(root), false);
+});
+
+test("setup 经明确开关用官方 CLI 自动创建强制 Base 控制台", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-base-create-")), "install");
   const tools = codexFixture({ lark: { includeOk: false } });
   const launchAgents = path.join(path.dirname(root), "launch-agents");
   const launchctl = fakeStatefulLaunchctl(
-    mkdtempSync(path.join(tmpdir(), "twin-guided-setup-launchctl-"))
+    mkdtempSync(path.join(tmpdir(), "twin-guided-base-create-launchctl-"))
   );
   const result = json(run([
     "--root", root,
@@ -1293,6 +1659,7 @@ test("setup 无需预写 JSON 即可发现官方双身份并生成最小私有�
     "setup",
     "--profile", "fixture-profile",
     "--timezone", "Asia/Shanghai",
+    "--create-missing-resources",
     "--codex-environment-root", tools.codexEnvironmentRoot,
     "--approve-production-data"
   ], {
@@ -1300,8 +1667,10 @@ test("setup 无需预写 JSON 即可发现官方双身份并生成最小私有�
   }));
 
   assert.equal(result.status, "setup-complete");
-  assert.equal(result.readiness, "ready");
-  assert.equal(result.message_scope, "bot_only");
+  assert.equal(result.readiness, "safe-but-disabled");
+  assert.equal(result.production_enabled, false);
+  assert.equal(result.control_mode, "base");
+  assert.deepEqual(result.resource_setup, { created: ["console"], reused: [] });
   const privateConfig = JSON.parse(readFileSync(
     path.join(root, "private/config.json"),
     "utf8"
@@ -1313,14 +1682,879 @@ test("setup 无需预写 JSON 即可发现官方双身份并生成最小私有�
   assert.equal(privateConfig.principal.name, "示例发现用户");
   assert.equal(privateConfig.principal.open_id, "ou_fixture_discovered_principal");
   assert.equal(privateConfig.principal.timezone, "Asia/Shanghai");
-  assert.deepEqual(privateConfig.allowed_lark_domains, ["im"]);
+  assert.deepEqual(privateConfig.allowed_lark_domains, ["im", "base"]);
   assert.equal(privateConfig.production_data_approved, true);
-  assert.deepEqual(privateConfig.control, { mode: "local", enabled: true });
+  assert.deepEqual(privateConfig.control, { mode: "base" });
+  assert.deepEqual(privateConfig.console, {
+    base_token: "fixture_auto_console_base",
+    runtime_table: "tbl_auto_runtime",
+    group_rules_table: "tbl_auto_group"
+  });
   assert.equal(privateConfig.privacy.state_retention_days, 7);
   assert.equal(privateConfig.privacy.result_log_retention_days, 3);
+
+  const calls = readFileSync(tools.larkLog, "utf8").trim().split("\n");
+  for (const command of ["+base-create", "+table-create", "+record-upsert"]) {
+    const writes = calls.filter((line) => line.includes(`base ${command}`));
+    assert.equal(writes.length, 2);
+    assert.match(writes[0], /--dry-run/u);
+    assert.doesNotMatch(writes[1], /--dry-run/u);
+    for (const line of writes) {
+      assert.match(line, /--as user/u);
+      assert.doesNotMatch(line, /--yes/u);
+    }
+  }
+  assert.match(calls.find((line) => line.includes("base +base-create")), /运行配置/u);
+  assert.match(calls.find((line) => line.includes("base +table-create")), /群级规则/u);
+  assert.equal(existsSync(tools.larkBaseCreatedMarker), true);
+  assert.equal(existsSync(tools.larkBaseGroupTableMarker), true);
+  assert.equal(existsSync(tools.larkBaseRuntimeRecordMarker), true);
   const serializedResult = JSON.stringify(result);
   assert.equal(serializedResult.includes("示例发现用户"), false);
   assert.equal(serializedResult.includes("ou_fixture_discovered_principal"), false);
+  assert.equal(serializedResult.includes("fixture_auto_console_base"), false);
+});
+
+test("setup 重试时复用已创建的 Base 并补齐缺少的控制表", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-base-resume-")), "install");
+  const tools = codexFixture({ lark: { includeOk: false } });
+  writeFileSync(tools.larkBaseCreatedMarker, "created\n", { mode: 0o600 });
+  writeFileSync(tools.larkBaseRuntimeRecordMarker, JSON.stringify({
+    名称: "默认配置",
+    数字分身启用: false,
+    允许域: ["继承"],
+    个性化规则: ""
+  }), { mode: 0o600 });
+  const launchctl = fakeStatefulLaunchctl(
+    mkdtempSync(path.join(tmpdir(), "twin-guided-base-resume-launchctl-"))
+  );
+  const result = json(run([
+    "--root", root,
+    "--launch-agents-dir", path.join(path.dirname(root), "launch-agents"),
+    "--launchctl-bin", launchctl.filename,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--create-missing-resources",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ], {
+    env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` }
+  }));
+
+  assert.equal(result.readiness, "safe-but-disabled");
+  assert.deepEqual(result.resource_setup, { created: ["console"], reused: [] });
+  const calls = readFileSync(tools.larkLog, "utf8").trim().split("\n");
+  assert.equal(calls.filter((line) => line.includes("base +base-create")).length, 0);
+  assert.equal(calls.filter((line) => line.includes("base +table-create")).length, 2);
+  assert.equal(calls.filter((line) => line.includes("base +record-upsert")).length, 0);
+  assert.equal(existsSync(tools.larkBaseGroupTableMarker), true);
+});
+
+test("setup 重试时保留已迁移群规则并只补齐缺少的记录", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-group-resume-")), "install");
+  const firstRule = ["legacy-chat-a", "legacy-chat-a", true, "规则 A"];
+  const secondRule = ["legacy-chat-b", "legacy-chat-b", true, "规则 B"];
+  const tools = codexFixture({
+    lark: {
+      includeOk: false,
+      baseCreated: {
+        app_token: "fixture_auto_console_base",
+        name: "示例负责人的数字分身控制台"
+      },
+      fixtureCreatedGroupData: [firstRule],
+      fixtureCreatedGroupDataAfterWrite: [firstRule, secondRule]
+    }
+  });
+  run(["--root", root, "init", "--instance", "fixture-group-resume"]);
+  configureRoot(root, tools, {
+    overrides: {
+      message_scope: "bot_only",
+      allowed_lark_domains: ["im"],
+      control: { mode: "local", enabled: false },
+      group_rules: [
+        { chat_id: "legacy-chat-a", rules: ["规则 A"] },
+        { chat_id: "legacy-chat-b", rules: ["规则 B"] }
+      ]
+    }
+  });
+  writeFileSync(tools.larkBaseCreatedMarker, "created\n", { mode: 0o600 });
+  writeFileSync(tools.larkBaseGroupTableMarker, "created\n", { mode: 0o600 });
+  writeFileSync(tools.larkBaseRuntimeRecordMarker, JSON.stringify({
+    名称: "默认配置",
+    数字分身启用: false,
+    允许域: ["继承"],
+    个性化规则: ""
+  }), { mode: 0o600 });
+  const launchctl = fakeStatefulLaunchctl(
+    mkdtempSync(path.join(tmpdir(), "twin-guided-group-resume-launchctl-"))
+  );
+
+  const result = json(run([
+    "--root", root,
+    "--launch-agents-dir", path.join(path.dirname(root), "launch-agents"),
+    "--launchctl-bin", launchctl.filename,
+    "setup",
+    "--capabilities", "message",
+    "--create-missing-resources"
+  ], {
+    env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` }
+  }));
+
+  assert.equal(result.readiness, "safe-but-disabled");
+  const privateConfig = JSON.parse(readFileSync(
+    path.join(root, "private/config.json"),
+    "utf8"
+  ));
+  assert.deepEqual(privateConfig.control, { mode: "base" });
+  assert.equal(Object.hasOwn(privateConfig, "group_rules"), false);
+  const groupWrites = readFileSync(tools.larkLog, "utf8")
+    .trim()
+    .split("\n")
+    .filter((line) => (
+      line.includes("base +record-upsert") && line.includes("tbl_auto_group")
+    ));
+  assert.equal(groupWrites.length, 2);
+  assert.equal(groupWrites.every((line) => line.includes("legacy-chat-b")), true);
+  assert.equal(groupWrites.some((line) => line.includes("legacy-chat-a")), false);
+  assert.equal(existsSync(tools.larkBaseGroupRecordMarker), true);
+});
+
+test("setup 在群规则写后读回内容不一致时失败关闭", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-group-verify-")), "install");
+  const tools = codexFixture({
+    lark: {
+      includeOk: false,
+      baseCreated: {
+        app_token: "fixture_auto_console_base",
+        name: "示例负责人的数字分身控制台"
+      },
+      fixtureCreatedGroupDataAfterWrite: [[
+        "unexpected-chat",
+        "unexpected-chat",
+        true,
+        "错误规则"
+      ]]
+    }
+  });
+  run(["--root", root, "init", "--instance", "fixture-group-verify"]);
+  configureRoot(root, tools, {
+    overrides: {
+      message_scope: "bot_only",
+      allowed_lark_domains: ["im"],
+      control: { mode: "local", enabled: false },
+      group_rules: [{ chat_id: "legacy-chat", rules: ["预期规则"] }]
+    }
+  });
+  writeFileSync(tools.larkBaseCreatedMarker, "created\n", { mode: 0o600 });
+  writeFileSync(tools.larkBaseGroupTableMarker, "created\n", { mode: 0o600 });
+  writeFileSync(tools.larkBaseRuntimeRecordMarker, JSON.stringify({
+    名称: "默认配置",
+    数字分身启用: false,
+    允许域: ["继承"],
+    个性化规则: ""
+  }), { mode: 0o600 });
+
+  const result = run([
+    "--root", root,
+    "setup",
+    "--capabilities", "message",
+    "--create-missing-resources"
+  ], {
+    env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` },
+    expected: 1
+  });
+
+  const error = JSON.parse(result.stderr);
+  assert.equal(error.code, "LARK_RESOURCE_CREATION_UNVERIFIED");
+  assert.deepEqual(error.created_resources_retained, ["console"]);
+  assert.equal(error.retry_safe, false);
+  const privateConfig = JSON.parse(readFileSync(
+    path.join(root, "private/config.json"),
+    "utf8"
+  ));
+  assert.deepEqual(privateConfig.control, { mode: "local", enabled: false });
+  assert.deepEqual(privateConfig.group_rules, [
+    { chat_id: "legacy-chat", rules: ["预期规则"] }
+  ]);
+});
+
+test("setup 分页读回超过 200 条群规则后再切换唯一规则源", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-group-pages-")), "install");
+  const groupRules = Array.from({ length: 201 }, (_, index) => ({
+    chat_id: `legacy-chat-${String(index + 1).padStart(3, "0")}`,
+    rules: [`规则 ${index + 1}`]
+  }));
+  const tools = codexFixture({
+    lark: {
+      includeOk: false,
+      baseCreated: {
+        app_token: "fixture_auto_console_base",
+        name: "示例负责人的数字分身控制台"
+      },
+      fixtureCreatedGroupData: groupRules.map((groupRule) => [
+        groupRule.chat_id,
+        groupRule.chat_id,
+        true,
+        groupRule.rules.join("\n")
+      ])
+    }
+  });
+  run(["--root", root, "init", "--instance", "fixture-group-pages"]);
+  configureRoot(root, tools, {
+    overrides: {
+      message_scope: "bot_only",
+      allowed_lark_domains: ["im"],
+      control: { mode: "local", enabled: false },
+      group_rules: groupRules
+    }
+  });
+  writeFileSync(tools.larkBaseCreatedMarker, "created\n", { mode: 0o600 });
+  writeFileSync(tools.larkBaseGroupTableMarker, "created\n", { mode: 0o600 });
+  writeFileSync(tools.larkBaseRuntimeRecordMarker, JSON.stringify({
+    名称: "默认配置",
+    数字分身启用: false,
+    允许域: ["继承"],
+    个性化规则: ""
+  }), { mode: 0o600 });
+  const launchctl = fakeStatefulLaunchctl(
+    mkdtempSync(path.join(tmpdir(), "twin-guided-group-pages-launchctl-"))
+  );
+
+  const result = json(run([
+    "--root", root,
+    "--launch-agents-dir", path.join(path.dirname(root), "launch-agents"),
+    "--launchctl-bin", launchctl.filename,
+    "setup",
+    "--capabilities", "message",
+    "--create-missing-resources"
+  ], {
+    env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` }
+  }));
+
+  assert.equal(result.readiness, "safe-but-disabled");
+  const privateConfig = JSON.parse(readFileSync(
+    path.join(root, "private/config.json"),
+    "utf8"
+  ));
+  assert.deepEqual(privateConfig.control, { mode: "base" });
+  assert.equal(Object.hasOwn(privateConfig, "group_rules"), false);
+  const groupReads = readFileSync(tools.larkLog, "utf8")
+    .trim()
+    .split("\n")
+    .filter((line) => line.includes("base +record-list") && line.includes("tbl_auto_group"));
+  assert.equal(groupReads.some((line) => line.includes("--offset 200")), true);
+});
+
+test("setup 对同名 Base 的结构冲突只读失败且不擅自改造", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-base-conflict-")), "install");
+  const tools = codexFixture({
+    lark: {
+      baseExistingBases: [{
+        app_token: "fixture_existing_console_base",
+        name: "示例发现用户的数字分身控制台"
+      }],
+      fixtureBaseRuntimeSchemaFields: [
+        { field_id: "fld_runtime_name", field_name: "名称", type: "text" },
+        { field_id: "fld_runtime_enabled", field_name: "数字分身启用", type: "checkbox" },
+        { field_id: "fld_runtime_rules", field_name: "个性化规则", type: "text" }
+      ]
+    }
+  });
+  const result = run([
+    "--root", root,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--create-missing-resources",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ], {
+    env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` },
+    expected: 1
+  });
+
+  const error = JSON.parse(result.stderr);
+  assert.equal(error.code, "LARK_BASE_CONSOLE_SCHEMA_CONFLICT");
+  assert.equal(error.resource_type, "console");
+  assert.equal(error.table_role, "runtime");
+  assert.deepEqual(error.invalid_fields, [{ field: "允许域", issue: "missing" }]);
+  assert.equal(existsSync(root), false);
+  assert.doesNotMatch(
+    readFileSync(tools.larkLog, "utf8"),
+    /\bbase \+(?:base-create|table-create|record-upsert)\b/u
+  );
+});
+
+test("setup 选择资源型能力但未提供资源时明确告知已有与自动创建路径", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-resource-required-")), "install");
+  const tools = codexFixture();
+  const result = run([
+    "--root", root,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--capabilities", "message,enterprise_knowledge,daily_memory",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ], {
+    env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` },
+    expected: 1
+  });
+
+  const error = JSON.parse(result.stderr);
+  assert.equal(error.code, "GUIDED_RESOURCE_SELECTION_REQUIRED");
+  assert.match(error.message, /--create-missing-resources/u);
+  assert.deepEqual(error.missing_resources, [
+    "enterprise_knowledge",
+    "daily_memory",
+    "console"
+  ]);
+  assert.deepEqual(error.existing_resource_options, {
+    enterprise_knowledge: [
+      "--knowledge-space-name",
+      "--knowledge-space-id",
+      "--knowledge-direction"
+    ],
+    daily_memory: [
+      "--daily-memory-folder-token",
+      "--daily-memory-folder-name"
+    ],
+    console: [
+      "--console-base-token",
+      "--console-runtime-table",
+      "--console-group-rules-table"
+    ]
+  });
+  assert.equal(error.automatic_creation_option, "--create-missing-resources");
+  assert.equal(existsSync(root), false);
+  assert.doesNotMatch(
+    readFileSync(tools.larkLog, "utf8"),
+    /\+(?:space-create|create-folder)\b/u
+  );
+  assert.equal(result.stderr.includes("示例发现用户"), false);
+  assert.equal(result.stderr.includes("ou_fixture_discovered_principal"), false);
+});
+
+test("已有实例缺少资源时先提示且不采集或改写本机运行状态", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-resource-existing-")), "install");
+  const tools = codexFixture();
+  const launchAgents = path.join(path.dirname(root), "launch-agents");
+  const launchctl = fakeStatefulLaunchctl(
+    mkdtempSync(path.join(tmpdir(), "twin-guided-resource-existing-launchctl-"))
+  );
+  const environment = {
+    PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}`
+  };
+  const common = [
+    "--root", root,
+    "--launch-agents-dir", launchAgents,
+    "--launchctl-bin", launchctl.filename,
+    "setup"
+  ];
+  assert.equal(json(run([
+    ...common,
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--capabilities", "message",
+    "--create-missing-resources",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ], { env: environment })).status, "setup-complete");
+
+  const privateDirectory = path.join(root, "private");
+  const beforePrivate = snapshotDirectory(privateDirectory);
+  const beforeLaunchctl = readFileSync(launchctl.log, "utf8");
+  const result = run([
+    ...common,
+    "--capabilities", "message,enterprise_knowledge,daily_memory"
+  ], { env: environment, expected: 1 });
+
+  const error = JSON.parse(result.stderr);
+  assert.equal(error.code, "GUIDED_RESOURCE_SELECTION_REQUIRED");
+  assert.deepEqual(error.missing_resources, [
+    "daily_memory"
+  ]);
+  assert.deepEqual(snapshotDirectory(privateDirectory), beforePrivate);
+  assert.equal(readFileSync(launchctl.log, "utf8"), beforeLaunchctl);
+});
+
+test("setup 经明确开关用官方 CLI 创建、读回并复用知识空间和日报目录", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-resource-create-")), "install");
+  const tools = codexFixture({ lark: { wikiSpaces: [], driveRootFiles: [] } });
+  const launchAgents = path.join(path.dirname(root), "launch-agents");
+  const launchctl = fakeStatefulLaunchctl(
+    mkdtempSync(path.join(tmpdir(), "twin-guided-resource-create-launchctl-"))
+  );
+  const args = [
+    "--root", root,
+    "--launch-agents-dir", launchAgents,
+    "--launchctl-bin", launchctl.filename,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--capabilities", "message,enterprise_knowledge,daily_memory",
+    "--create-missing-resources",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ];
+  const environment = {
+    PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}`
+  };
+
+  const first = json(run(args, { env: environment }));
+  assert.equal(first.status, "setup-complete");
+  assert.deepEqual(first.resource_setup, {
+    created: ["enterprise_knowledge", "daily_memory", "console"],
+    reused: []
+  });
+  const privateConfig = JSON.parse(readFileSync(
+    path.join(root, "private/config.json"),
+    "utf8"
+  ));
+  assert.deepEqual(privateConfig.control, { mode: "base" });
+  assert.equal(Object.hasOwn(privateConfig, "authority_rules"), false);
+  assert.deepEqual(privateConfig.console, {
+    base_token: "fixture_auto_console_base",
+    runtime_table: "tbl_auto_runtime",
+    group_rules_table: "tbl_auto_group"
+  });
+  assert.deepEqual(privateConfig.daily_memory, {
+    folder_token: "fixture_auto_daily_memory_folder",
+    folder_name: "示例发现用户的每日工作记忆",
+    excluded_chat_ids: [],
+    excluded_topics: []
+  });
+  assert.equal(statSync(path.join(root, "private/config.json")).mode & 0o777, 0o600);
+  assert.equal(first.resource_setup.created.includes("console"), true);
+  for (const privateValue of [
+    "fixture_auto_knowledge_space",
+    "fixture_auto_daily_memory_folder",
+    "示例发现用户"
+  ]) {
+    assert.equal(JSON.stringify(first).includes(privateValue), false);
+  }
+
+  const second = json(run(args, { env: environment }));
+  assert.equal(second.status, "setup-complete");
+  assert.deepEqual(second.resource_setup, { created: [], reused: [] });
+
+  const calls = readFileSync(tools.larkLog, "utf8").trim().split("\n");
+  const wikiCreates = calls.filter((line) => /\bwiki \+space-create\b/u.test(line));
+  const driveCreates = calls.filter((line) => /\bdrive \+create-folder\b/u.test(line));
+  assert.equal(wikiCreates.length, 2);
+  assert.equal(driveCreates.length, 2);
+  assert.match(wikiCreates[0], /--dry-run/u);
+  assert.doesNotMatch(wikiCreates[1], /--dry-run/u);
+  assert.match(driveCreates[0], /--dry-run/u);
+  assert.doesNotMatch(driveCreates[1], /--dry-run/u);
+  for (const line of [...wikiCreates, ...driveCreates]) {
+    assert.match(line, /--as user/u);
+    assert.doesNotMatch(line, /--yes/u);
+  }
+  assert.match(wikiCreates[1], /示例发现用户的数字分身知识库/u);
+  assert.match(driveCreates[1], /示例发现用户的每日工作记忆/u);
+  assert.match(
+    calls.find((line) => /\bbase \+record-upsert\b/u.test(line) && !/--dry-run/u.test(line)),
+    /企业知识库/u
+  );
+});
+
+test("setup 遍历 Drive 根目录全部分页并复用第二页已有日报目录", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-drive-pages-")), "install");
+  const targetFolder = {
+    type: "folder",
+    token: "fixture_second_page_daily_memory",
+    name: "示例发现用户的每日工作记忆"
+  };
+  const tools = codexFixture({
+    lark: {
+      driveRootPages: [[{
+        type: "folder",
+        token: "fixture_unrelated_first_page",
+        name: "其他目录"
+      }], [targetFolder]]
+    }
+  });
+  const launchctl = fakeStatefulLaunchctl(
+    mkdtempSync(path.join(tmpdir(), "twin-guided-drive-pages-launchctl-"))
+  );
+  const result = json(run([
+    "--root", root,
+    "--launch-agents-dir", path.join(path.dirname(root), "launch-agents"),
+    "--launchctl-bin", launchctl.filename,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--capabilities", "message,daily_memory",
+    "--create-missing-resources",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ], {
+    env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` }
+  }));
+
+  assert.deepEqual(result.resource_setup, {
+    created: ["console"],
+    reused: ["daily_memory"]
+  });
+  const privateConfig = JSON.parse(readFileSync(
+    path.join(root, "private/config.json"),
+    "utf8"
+  ));
+  assert.equal(privateConfig.daily_memory.folder_token, targetFolder.token);
+  const calls = readFileSync(tools.larkLog, "utf8");
+  assert.match(calls, /fixture_drive_page_2/u);
+  assert.doesNotMatch(calls, /\bdrive \+create-folder\b/u);
+});
+
+test("setup 在创建结果损坏但远端唯一资源可读回时继续完成", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-create-recover-")), "install");
+  const tools = codexFixture({
+    lark: { wikiSpaces: [], wikiCreateMalformedAfterWrite: true }
+  });
+  const launchctl = fakeStatefulLaunchctl(
+    mkdtempSync(path.join(tmpdir(), "twin-guided-create-recover-launchctl-"))
+  );
+  const result = json(run([
+    "--root", root,
+    "--launch-agents-dir", path.join(path.dirname(root), "launch-agents"),
+    "--launchctl-bin", launchctl.filename,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--capabilities", "message,enterprise_knowledge",
+    "--create-missing-resources",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ], {
+    env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` }
+  }));
+
+  assert.deepEqual(result.resource_setup, {
+    created: ["enterprise_knowledge", "console"],
+    reused: []
+  });
+  assert.equal(JSON.stringify(result).includes("fixture_auto_knowledge_space"), false);
+  assert.equal(existsSync(tools.larkWikiCreatedMarker), true);
+});
+
+test("setup 在创建结果和读回都不确定时明确标记可能保留且禁止安全重试声明", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-create-unknown-")), "install");
+  const tools = codexFixture({
+    lark: {
+      wikiSpaces: [],
+      wikiCreateMalformedAfterWrite: true,
+      wikiListExitAfterCreateCode: 1
+    }
+  });
+  const result = run([
+    "--root", root,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--capabilities", "message,enterprise_knowledge",
+    "--create-missing-resources",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ], {
+    env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` },
+    expected: 1
+  });
+
+  const error = JSON.parse(result.stderr);
+  assert.equal(error.code, "LARK_RESOURCE_CREATION_OUTCOME_UNKNOWN");
+  assert.deepEqual(error.created_resources_may_be_retained, ["enterprise_knowledge"]);
+  assert.equal(error.retry_safe, false);
+  assert.equal(existsSync(root), false);
+  assert.equal(existsSync(tools.larkWikiCreatedMarker), true);
+});
+
+test("setup 在不确定创建后暂未读到资源时不宣称可安全重试", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-create-not-visible-")), "install");
+  const tools = codexFixture({
+    lark: {
+      wikiSpaces: [],
+      wikiCreateMalformedAfterWrite: true,
+      wikiCreatedVisibleAfterWrite: false
+    }
+  });
+  const result = run([
+    "--root", root,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--capabilities", "message,enterprise_knowledge",
+    "--create-missing-resources",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ], {
+    env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` },
+    expected: 1
+  });
+
+  const error = JSON.parse(result.stderr);
+  assert.equal(error.code, "LARK_RESOURCE_CREATION_OUTCOME_UNKNOWN");
+  assert.deepEqual(error.created_resources_may_be_retained, ["enterprise_knowledge"]);
+  assert.equal(error.retry_safe, false);
+  assert.equal(existsSync(root), false);
+  assert.equal(existsSync(tools.larkWikiCreatedMarker), true);
+});
+
+test("setup 在成功创建后暂未读到资源时同样不宣称可安全重试", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-create-unverified-")), "install");
+  const tools = codexFixture({
+    lark: {
+      wikiSpaces: [],
+      wikiCreatedVisibleAfterWrite: false
+    }
+  });
+  const result = run([
+    "--root", root,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--capabilities", "message,enterprise_knowledge",
+    "--create-missing-resources",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ], {
+    env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` },
+    expected: 1
+  });
+
+  const error = JSON.parse(result.stderr);
+  assert.equal(error.code, "LARK_RESOURCE_CREATION_UNVERIFIED");
+  assert.deepEqual(error.created_resources_retained, ["enterprise_knowledge"]);
+  assert.deepEqual(error.created_resources_may_be_retained, ["enterprise_knowledge"]);
+  assert.equal(error.retry_safe, false);
+  assert.equal(existsSync(root), false);
+  assert.equal(existsSync(tools.larkWikiCreatedMarker), true);
+});
+
+test("setup 在成功创建后读回失败时不宣称可安全重试", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-create-readback-failed-")), "install");
+  const tools = codexFixture({
+    lark: {
+      wikiSpaces: [],
+      wikiListExitAfterCreateCode: 1
+    }
+  });
+  const result = run([
+    "--root", root,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--capabilities", "message,enterprise_knowledge",
+    "--create-missing-resources",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ], {
+    env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` },
+    expected: 1
+  });
+
+  const error = JSON.parse(result.stderr);
+  assert.equal(error.code, "LARK_RESOURCE_DISCOVERY_FAILED");
+  assert.equal(error.stage, "verify");
+  assert.deepEqual(error.created_resources_retained, ["enterprise_knowledge"]);
+  assert.deepEqual(error.created_resources_may_be_retained, ["enterprise_knowledge"]);
+  assert.equal(error.retry_safe, false);
+  assert.equal(existsSync(root), false);
+  assert.equal(existsSync(tools.larkWikiCreatedMarker), true);
+});
+
+test("setup 在成功创建后读回多个同名资源时失败关闭且不宣称可安全重试", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-create-readback-ambiguous-")), "install");
+  const tools = codexFixture({
+    lark: {
+      wikiSpaces: [],
+      wikiAfterCreateAdditionalSpaces: [{
+        space_id: "fixture_second_created_knowledge_space",
+        name: "示例发现用户的数字分身知识库"
+      }]
+    }
+  });
+  const result = run([
+    "--root", root,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--capabilities", "message,enterprise_knowledge",
+    "--create-missing-resources",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ], {
+    env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` },
+    expected: 1
+  });
+
+  const error = JSON.parse(result.stderr);
+  assert.equal(error.code, "LARK_RESOURCE_AMBIGUOUS");
+  assert.equal(error.stage, "verify");
+  assert.equal(error.match_count, 2);
+  assert.deepEqual(error.created_resources_retained, ["enterprise_knowledge"]);
+  assert.deepEqual(error.created_resources_may_be_retained, ["enterprise_knowledge"]);
+  assert.equal(error.retry_safe, false);
+  assert.equal(result.stderr.includes("fixture_second_created_knowledge_space"), false);
+  assert.equal(existsSync(root), false);
+});
+
+test("setup 对确定性名称的多个知识空间失败关闭且不猜测 ID", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-resource-ambiguous-")), "install");
+  const privateIds = ["fixture_private_space_a", "fixture_private_space_b"];
+  const tools = codexFixture({
+    lark: {
+      wikiSpaces: privateIds.map((space_id) => ({
+        space_id,
+        name: "示例发现用户的数字分身知识库"
+      }))
+    }
+  });
+  const result = run([
+    "--root", root,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--capabilities", "message,enterprise_knowledge",
+    "--create-missing-resources",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ], {
+    env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` },
+    expected: 1
+  });
+
+  const error = JSON.parse(result.stderr);
+  assert.equal(error.code, "LARK_RESOURCE_AMBIGUOUS");
+  assert.equal(error.resource_type, "enterprise_knowledge");
+  assert.equal(error.match_count, 2);
+  assert.deepEqual(error.existing_resource_options, [
+    "--knowledge-space-name",
+    "--knowledge-space-id",
+    "--knowledge-direction"
+  ]);
+  assert.equal(existsSync(root), false);
+  assert.doesNotMatch(readFileSync(tools.larkLog, "utf8"), /\bwiki \+space-create\b/u);
+  for (const privateId of privateIds) assert.equal(result.stderr.includes(privateId), false);
+});
+
+test("setup 创建资源缺少官方 scope 时保留错误提示且不自动追加 yes", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-resource-scope-")), "install");
+  const tools = codexFixture({
+    lark: { wikiSpaces: [], wikiCreateExitCode: 1 }
+  });
+  const result = run([
+    "--root", root,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--capabilities", "message,enterprise_knowledge",
+    "--create-missing-resources",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ], {
+    env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` },
+    expected: 1
+  });
+
+  const error = JSON.parse(result.stderr);
+  assert.equal(error.code, "LARK_RESOURCE_CREATION_FAILED");
+  assert.equal(error.resource_type, "enterprise_knowledge");
+  assert.equal(error.stage, "create");
+  assert.equal(error.authorization_required, true);
+  assert.deepEqual(error.missing_scopes, ["wiki:space:write_only"]);
+  assert.equal(existsSync(root), false);
+  const calls = readFileSync(tools.larkLog, "utf8");
+  assert.match(calls, /\bwiki \+space-create\b.*--dry-run/u);
+  assert.doesNotMatch(calls, /--yes/u);
+  assert.equal(existsSync(tools.larkWikiCreatedMarker), false);
+});
+
+test("setup 遇到官方 CLI exit 10 时停止且不自行追加 yes", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-resource-confirm-")), "install");
+  const tools = codexFixture({
+    lark: { wikiSpaces: [], wikiCreateExitCode: 10 }
+  });
+  const result = run([
+    "--root", root,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--capabilities", "message,enterprise_knowledge",
+    "--create-missing-resources",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ], {
+    env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` },
+    expected: 1
+  });
+
+  const error = JSON.parse(result.stderr);
+  assert.equal(error.code, "LARK_RESOURCE_CONFIRMATION_REQUIRED");
+  assert.equal(error.resource_type, "enterprise_knowledge");
+  assert.equal(error.stage, "create");
+  const calls = readFileSync(tools.larkLog, "utf8");
+  assert.doesNotMatch(calls, /--yes/u);
+  assert.equal(calls.match(/\bwiki \+space-create\b/gu)?.length, 2);
+  assert.equal(existsSync(tools.larkWikiCreatedMarker), false);
+  assert.equal(existsSync(root), false);
+});
+
+test("setup 本机失败后保留已创建资源并在重试时精确复用", () => {
+  const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-resource-retry-")), "install");
+  mkdirSync(root, { mode: 0o700 });
+  const tools = codexFixture({ lark: { wikiSpaces: [], driveRootFiles: [] } });
+  const launchAgents = path.join(path.dirname(root), "launch-agents");
+  const failingLaunchctl = fakeStatefulLaunchctl(
+    mkdtempSync(path.join(tmpdir(), "twin-guided-resource-retry-failing-launchctl-")),
+    { failFirstStart: "app.feishu-digital-twin.resource-retry.realtime" }
+  );
+  const setupArgs = (launchctlBin) => [
+    "--root", root,
+    "--instance", "resource-retry",
+    "--launch-agents-dir", launchAgents,
+    "--launchctl-bin", launchctlBin,
+    "setup",
+    "--profile", "fixture-profile",
+    "--timezone", "Asia/Shanghai",
+    "--capabilities", "message,enterprise_knowledge,daily_memory",
+    "--create-missing-resources",
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data"
+  ];
+  const environment = {
+    PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}`
+  };
+
+  const failed = run(setupArgs(failingLaunchctl.filename), {
+    env: environment,
+    expected: 1
+  });
+  const error = JSON.parse(failed.stderr);
+  assert.equal(error.code, "SERVICE_START_FAILED");
+  assert.deepEqual(error.created_resources_retained, [
+    "enterprise_knowledge",
+    "daily_memory",
+    "console"
+  ]);
+  assert.equal(error.retry_safe, true);
+  assert.deepEqual(readdirSync(root), []);
+  assert.equal(existsSync(tools.larkWikiCreatedMarker), true);
+  assert.equal(existsSync(tools.larkDriveCreatedMarker), true);
+
+  const healthyLaunchctl = fakeStatefulLaunchctl(
+    mkdtempSync(path.join(tmpdir(), "twin-guided-resource-retry-healthy-launchctl-"))
+  );
+  const retried = json(run(setupArgs(healthyLaunchctl.filename), { env: environment }));
+  assert.equal(retried.status, "setup-complete");
+  assert.deepEqual(retried.resource_setup, {
+    created: [],
+    reused: ["enterprise_knowledge", "daily_memory", "console"]
+  });
+  const calls = readFileSync(tools.larkLog, "utf8").trim().split("\n");
+  assert.equal(calls.filter((line) => /\bwiki \+space-create\b/u.test(line)).length, 2);
+  assert.equal(calls.filter((line) => /\bdrive \+create-folder\b/u.test(line)).length, 2);
 });
 
 test("setup 可用脚本化选项引用已有控制 Base 和每日记忆目录", () => {
@@ -1413,7 +2647,7 @@ test("setup 可用脚本化选项引用已有控制 Base 和每日记忆目录",
   );
 });
 
-test("setup 在本机控制模式把已有知识空间写成 AI 自然语言规则", () => {
+test("setup 把已有知识空间路由写入自动创建的 Base 唯一规则源", () => {
   const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-knowledge-")), "install");
   const tools = codexFixture({ lark: { includeOk: false } });
   const launchctl = fakeStatefulLaunchctl(
@@ -1434,6 +2668,7 @@ test("setup 在本机控制模式把已有知识空间写成 AI 自然语言规�
     "--knowledge-space-name", privateValues.name,
     "--knowledge-space-id", privateValues.spaceId,
     "--knowledge-direction", privateValues.direction,
+    "--create-missing-resources",
     "--codex-environment-root", tools.codexEnvironmentRoot,
     "--approve-production-data"
   ], {
@@ -1445,17 +2680,15 @@ test("setup 在本机控制模式把已有知识空间写成 AI 自然语言规�
     path.join(root, "private/config.json"),
     "utf8"
   ));
-  assert.deepEqual(privateConfig.control, { mode: "local", enabled: true });
-  assert.equal(Object.hasOwn(privateConfig, "console"), false);
-  assert.deepEqual(privateConfig.authority_rules, [
-    `企业知识库：${privateValues.name}；space_id=${privateValues.spaceId}；适用于${privateValues.direction}`
-  ]);
+  assert.deepEqual(privateConfig.control, { mode: "base" });
+  assert.equal(Object.hasOwn(privateConfig, "console"), true);
+  assert.equal(Object.hasOwn(privateConfig, "authority_rules"), false);
   assert.deepEqual(privateConfig.allowed_lark_domains, [
     "im",
+    "base",
     "drive",
     "wiki",
     "docs",
-    "base",
     "sheets",
     "markdown"
   ]);
@@ -1465,10 +2698,14 @@ test("setup 在本机控制模式把已有知识空间写成 AI 自然语言规�
   }
   const larkCalls = readFileSync(tools.larkLog, "utf8");
   assert.match(larkCalls, /\bwiki \+space-list\b/u);
-  assert.doesNotMatch(larkCalls, /\b(?:base|drive|docs)\b/u);
+  assert.match(larkCalls, /\bbase \+record-upsert\b/u);
+  assert.match(
+    larkCalls,
+    new RegExp(`space_id=${privateValues.spaceId}`, "u")
+  );
 });
 
-test("setup 用官方 CLI 只读验真已有 Base、Wiki 和 Drive 引用并对无效引用失败关闭", () => {
+test("setup 用官方 CLI 只读验真已有 Base 和 Drive 引用并对无效引用失败关闭", () => {
   const fixtures = [{
     name: "base",
     lark: { baseFailAfter: 0 },
@@ -1478,17 +2715,12 @@ test("setup 用官方 CLI 只读验真已有 Base、Wiki 和 Drive 引用并对�
       "--console-group-rules-table", "fixture_private_group_rules_table"
     ]
   }, {
-    name: "wiki",
-    lark: { wikiSpaces: [] },
-    resourceArgs: [
-      "--knowledge-space-name", "fixture_private_knowledge_name",
-      "--knowledge-space-id", "fixture_private_space_id",
-      "--knowledge-direction", "fixture_private_direction"
-    ]
-  }, {
     name: "drive",
     lark: { driveListExitCode: 1 },
     resourceArgs: [
+      "--console-base-token", "fixture_private_base_token",
+      "--console-runtime-table", "fixture_private_runtime_table",
+      "--console-group-rules-table", "fixture_private_group_rules_table",
       "--daily-memory-folder-token", "fixture_private_folder_token",
       "--daily-memory-folder-name", "fixture_private_folder_name"
     ]
@@ -1651,6 +2883,9 @@ test("setup 对控制 Base 缺少必要字段时失败并回滚", () => {
   }, {
     name: "group-rules",
     lark: { baseGroupFields: ["启用", "群ID"] }
+  }, {
+    name: "new-setup-legacy-switch-only",
+    lark: { baseRuntimeFields: ["生产执行", "允许域", "个性化规则"] }
   }];
 
   for (const fixture of cases) {
@@ -1679,7 +2914,36 @@ test("setup 对控制 Base 缺少必要字段时失败并回滚", () => {
       expected: 1
     });
 
-    assert.equal(JSON.parse(result.stderr).code, "DOCTOR_FAILED");
+    const error = JSON.parse(result.stderr);
+    assert.equal(error.code, "DOCTOR_FAILED");
+    assert.deepEqual(error.failed_checks, [{
+      name: "lark_resources",
+      code: "BASE_CONSOLE_INVALID"
+    }]);
+    assert.equal(error.setup_guide.daily_master_switch.field, "数字分身启用");
+    assert.equal(error.setup_guide.daily_master_switch.first_install_value, false);
+    assert.equal(error.setup_guide.runtime_table.record_requirement, "exactly_one");
+    assert.deepEqual(
+      error.setup_guide.runtime_table.fields.map((field) => field.name),
+      ["名称", "数字分身启用", "允许域", "个性化规则"]
+    );
+    assert.equal(
+      error.setup_guide.runtime_table.fields.find(({ name }) => name === "名称").required,
+      false
+    );
+    const masterSwitch = error.setup_guide.runtime_table.fields.find(
+      ({ name }) => name === "数字分身启用"
+    );
+    assert.equal(masterSwitch.required, true);
+    assert.equal(masterSwitch.role, "daily_master_switch");
+    assert.deepEqual(masterSwitch.legacy_aliases, ["生产执行"]);
+    assert.equal(error.setup_guide.group_rules_table.record_requirement, "zero_or_more");
+    assert.equal(
+      error.setup_guide.group_rules_table.fields.find(({ name }) => name === "群名称").required,
+      false
+    );
+    assert.equal(error.setup_guide.automatic_base_creation, true);
+    assert.match(error.setup_guide.after_setup, /safe-but-disabled.*ready/u);
     assert.equal(existsSync(root), false);
   }
 });
@@ -1692,7 +2956,8 @@ test("setup 对已有资源参数缺项、多规则源和 --config 混用失败�
     expected: {
       resource_group: "console",
       missing_options: ["--console-runtime-table", "--console-group-rules-table"]
-    }
+    },
+    expectSetupGuide: true
   }, {
     args: ["--knowledge-space-name", privateValue, "--knowledge-space-id", "fixture-space"],
     code: "INCOMPLETE_GUIDED_RESOURCE_GROUP",
@@ -1722,6 +2987,15 @@ test("setup 对已有资源参数缺项、多规则源和 --config 混用失败�
     }
   }, {
     args: [
+      "--config", "/tmp/fixture-private-config.json",
+      "--create-missing-resources"
+    ],
+    code: "SETUP_CONFIG_OPTION_CONFLICT",
+    expected: {
+      conflicting_options: ["--create-missing-resources"]
+    }
+  }, {
+    args: [
       "--console-base-token", privateValue,
       "--console-runtime-table", "fixture-runtime-table",
       "--console-group-rules-table", "fixture-group-rules-table",
@@ -1743,6 +3017,17 @@ test("setup 对已有资源参数缺项、多规则源和 --config 混用失败�
     assert.equal(error.code, fixture.code);
     for (const [field, value] of Object.entries(fixture.expected ?? {})) {
       assert.deepEqual(error[field], value);
+    }
+    if (fixture.expectSetupGuide) {
+      assert.equal(error.setup_guide.daily_master_switch.field, "数字分身启用");
+      assert.equal(error.setup_guide.runtime_table.record_requirement, "exactly_one");
+      assert.equal(error.setup_guide.group_rules_table.record_requirement, "zero_or_more");
+      assert.deepEqual(error.setup_guide.setup_options, [
+        "--console-base-token",
+        "--console-runtime-table",
+        "--console-group-rules-table"
+      ]);
+      assert.equal(error.setup_guide.automatic_base_creation, true);
     }
     if (fixture.messagePattern) assert.match(error.message, fixture.messagePattern);
     assert.equal(result.stderr.includes(privateValue), false);
@@ -1774,6 +3059,7 @@ test("setup 从声明式能力选择生成去重的最小飞书业务域", () =>
       "daily_memory",
       "console"
     ].join(","),
+    "--create-missing-resources",
     "--codex-environment-root", tools.codexEnvironmentRoot,
     "--approve-production-data"
   ], {
@@ -1825,6 +3111,7 @@ test("setup 更新能力时保留已有知识空间和每日记忆所需的官�
     "--knowledge-direction", "fixture_private_direction",
     "--daily-memory-folder-token", "fixture_private_folder_token",
     "--daily-memory-folder-name", "fixture_private_folder_name",
+    "--create-missing-resources",
     "--codex-environment-root", tools.codexEnvironmentRoot,
     "--approve-production-data"
   ], { env: environment }));
@@ -1842,10 +3129,10 @@ test("setup 更新能力时保留已有知识空间和每日记忆所需的官�
   ));
   assert.deepEqual(privateConfig.allowed_lark_domains, [
     "im",
+    "base",
     "drive",
     "wiki",
     "docs",
-    "base",
     "sheets",
     "markdown",
     "task",
@@ -2025,6 +3312,7 @@ test("setup 未指定 profile 时自动选择唯一可用的官方 profile", () 
     "--launchctl-bin", launchctl.filename,
     "setup",
     "--timezone", "Asia/Shanghai",
+    "--create-missing-resources",
     "--codex-environment-root", tools.codexEnvironmentRoot,
     "--approve-production-data"
   ], {
@@ -2061,13 +3349,17 @@ test("setup 遇到多个 profile 时返回选择清单且不初始化实例", ()
 
 test("setup 引导模式扩大消息范围仍要求独立确认且不初始化", () => {
   const root = path.join(mkdtempSync(path.join(tmpdir(), "twin-guided-scope-")), "install");
-  const tools = codexFixture({ lark: { includeOk: false } });
+  const tools = codexFixture({
+    lark: { includeOk: false, wikiSpaces: [], driveRootFiles: [] }
+  });
   const result = run([
     "--root", root,
     "setup",
     "--profile", "fixture-profile",
     "--timezone", "Asia/Shanghai",
     "--message-scope", "internal_visible",
+    "--capabilities", "message,enterprise_knowledge,daily_memory",
+    "--create-missing-resources",
     "--codex-environment-root", tools.codexEnvironmentRoot,
     "--approve-production-data"
   ], {
@@ -2077,6 +3369,12 @@ test("setup 引导模式扩大消息范围仍要求独立确认且不初始化",
 
   assert.equal(JSON.parse(result.stderr).code, "MESSAGE_SCOPE_APPROVAL_REQUIRED");
   assert.equal(existsSync(root), false);
+  assert.equal(existsSync(tools.larkWikiCreatedMarker), false);
+  assert.equal(existsSync(tools.larkDriveCreatedMarker), false);
+  assert.doesNotMatch(
+    readFileSync(tools.larkLog, "utf8"),
+    /\+(?:space-create|create-folder)\b/u
+  );
 });
 
 test("已配置实例的引导 setup 应用配置参数且扩围前仍要求确认", () => {
@@ -2096,12 +3394,13 @@ test("已配置实例的引导 setup 应用配置参数且扩围前仍要求确�
     ...common,
     "--profile", "fixture-profile",
     "--timezone", "Asia/Shanghai",
+    "--create-missing-resources",
     "--codex-environment-root", tools.codexEnvironmentRoot,
     "--approve-production-data"
   ], {
     env: { PATH: `${tools.directory}${path.delimiter}${process.env.PATH ?? ""}` }
   });
-  assert.equal(json(initial).readiness, "ready");
+  assert.equal(json(initial).readiness, "safe-but-disabled");
   const configPath = path.join(root, "private/config.json");
   const before = readFileSync(configPath, "utf8");
 
@@ -2120,10 +3419,10 @@ test("已配置实例的引导 setup 应用配置参数且扩围前仍要求确�
     "--principal-name", "更新后的示例主体",
     "--approve-message-scope"
   ]));
-  assert.equal(updated.readiness, "ready");
+  assert.equal(updated.readiness, "safe-but-disabled");
   assert.equal(updated.message_scope, "internal_visible");
   const config = JSON.parse(readFileSync(configPath, "utf8"));
-  assert.deepEqual(config.allowed_lark_domains, ["im", "task", "contact", "approval"]);
+  assert.deepEqual(config.allowed_lark_domains, ["im", "task", "contact", "approval", "base"]);
   assert.equal(config.principal.name, "更新后的示例主体");
   assert.equal(config.principal.timezone, "Asia/Tokyo");
   assert.equal(config.principal.open_id, "ou_fixture_discovered_principal");
