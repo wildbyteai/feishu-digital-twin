@@ -8,7 +8,7 @@
 
 > 本项目不是飞书、Lark 或 OpenAI 官方产品。相关商标归各自权利人所有。
 
-> 当前候选版本为 `v0.1.11`。正式支持 macOS；目前从 GitHub 源码或版本标签安装，尚未发布 npm 和 Codex Marketplace 一键安装包。
+> 当前稳定源码版本为 `v0.1.11`。正式支持 macOS；目前从 GitHub 源码或版本标签安装，尚未发布 npm 和 Codex Marketplace 一键安装包。
 
 ## 一分钟理解
 
