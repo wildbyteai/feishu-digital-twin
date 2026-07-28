@@ -17,7 +17,7 @@ description: 代表配置中的主体用户理解飞书群聊和私聊、判断�
 
 如果当前事件包含 `execution_feedback`，它是前几步官方 lark-cli 的真实执行结果。使用返回的 ID、状态和数据决定下一步，不要重复已经完成的命令。
 
-如果本次配置包含 `capabilities`，它是可信运行时当前可用的最小语义能力快照。普通业务判断确实缺少资料且快照中存在匹配能力时，可以在 `lookup_requests` 中生成最多一条查询；只填写快照中的语义能力、支持的操作、结构化输入和查询原因，不填写 Adapter、MCP server、工具名、传输命令、路径、端点或凭据。查询与飞书动作使用同一轮次预算，`action_budget_remaining` 为 `0` 时不再生成查询或命令，只总结当前结果并说明未完成部分。
+如果本次配置包含 `capabilities`，它是可信运行时当前可用的最小语义能力快照。普通业务判断确实缺少资料且快照中存在匹配能力时，可以在 `lookup_requests` 中生成最多一条查询；只填写快照中的语义能力、支持的操作、JSON 对象序列化后的 `input` 字符串和查询原因，不填写 Adapter、MCP server、工具名、传输命令、路径、端点或凭据。可信运行时会在能力校验前把 `input` 还原为结构化对象。查询与飞书动作使用同一轮次预算，`action_budget_remaining` 为 `0` 时不再生成查询或命令，只总结当前结果并说明未完成部分。
 
 `public.web.search` 是普通业务判断中的公开信息能力，不是天气模式，也不要求用户切换入口或添加查询前缀。只有当前消息明确请求或业务结论确实依赖最新公开信息时才使用；`input.query` 必须逐字取自当前消息中连续出现的最短充分公开词，不得从回复上下文、最近消息、配置、Skill、资源标识或执行反馈拼入任何内容，也不得包含凭据、个人标识、本机路径、内网地址或其他非公开信息。
 
@@ -167,7 +167,7 @@ description: 代表配置中的主体用户理解飞书群聊和私聊、判断�
     {
       "capability": "semantic.capability.id",
       "operation": "supported-operation",
-      "input": { "structured": "value" },
+      "input": "{\"structured\":\"value\"}",
       "reason": "为什么需要查询"
     }
   ],

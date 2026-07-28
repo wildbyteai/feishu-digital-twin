@@ -10,6 +10,7 @@
     "reason",
     "response",
     "commands",
+    "lookup_requests",
     "source_refs"
   ],
   "properties": {
@@ -58,7 +59,7 @@
         "properties": {
           "capability": { "type": "string", "minLength": 1 },
           "operation": { "type": "string", "minLength": 1 },
-          "input": { "type": "object" },
+          "input": { "type": "string", "minLength": 2, "maxLength": 8192 },
           "reason": { "type": "string", "minLength": 1 }
         }
       }

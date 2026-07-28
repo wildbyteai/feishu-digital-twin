@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -147,6 +147,72 @@ test("Codex 决策契约接受独立的语义能力查询且拒绝传输细节",
   });
   await assert.rejects(
     () => transportAware.decide({ event: event() }),
+    (error) => error instanceof InferenceError && error.code === "INFERENCE_INVALID_OUTPUT"
+  );
+});
+
+test("Codex 严格输出中的 JSON 字符串查询输入会在可信边界还原为对象", async () => {
+  const adapter = new CodexInferenceAdapter({
+    codexBin: fakeCodex,
+    codexEnvironmentRoot: "/fixture/not-used",
+    runner: async (candidate) => ({
+      event_id: candidate.event_id,
+      outcome: "reply",
+      reason: "先读取流程再答复",
+      response: { mode: "representative", text: "我先核实流程。" },
+      commands: [],
+      lookup_requests: [{
+        capability: "fixture.workflow.read",
+        operation: "get",
+        input: JSON.stringify({ workflow_id: "fixture-42" }),
+        reason: "核实流程状态"
+      }],
+      source_refs: [candidate.message_id]
+    })
+  });
+
+  const decision = await adapter.decide({ event: event() });
+
+  assert.deepEqual(decision.lookup_requests[0].input, {
+    workflow_id: "fixture-42"
+  });
+});
+
+test("Codex 严格输出 Schema 要求查询数组并使用有界 JSON 字符串输入", () => {
+  const schema = JSON.parse(readFileSync(path.join(
+    projectRoot,
+    "runtime/schemas/codex-decision.schema.json"
+  ), "utf8"));
+
+  assert.equal(schema.required.includes("lookup_requests"), true);
+  assert.deepEqual(
+    schema.properties.lookup_requests.items.properties.input,
+    { type: "string", minLength: 2, maxLength: 8192 }
+  );
+});
+
+test("Codex 查询输入在 JSON 解析前执行独立字节上限", async () => {
+  const adapter = new CodexInferenceAdapter({
+    codexBin: fakeCodex,
+    codexEnvironmentRoot: "/fixture/not-used",
+    runner: async (candidate) => ({
+      event_id: candidate.event_id,
+      outcome: "reply",
+      reason: "拒绝过大输入",
+      response: { mode: "suggestion", text: "无法处理。" },
+      commands: [],
+      lookup_requests: [{
+        capability: "fixture.workflow.read",
+        operation: "get",
+        input: JSON.stringify({ workflow_id: "x".repeat(8192) }),
+        reason: "核实流程状态"
+      }],
+      source_refs: [candidate.message_id]
+    })
+  });
+
+  await assert.rejects(
+    () => adapter.decide({ event: event() }),
     (error) => error instanceof InferenceError && error.code === "INFERENCE_INVALID_OUTPUT"
   );
 });
