@@ -120,7 +120,7 @@ const decision = {
     text: webSearchEnabled ? "Codex CLI 最新稳定版本为合成版本。" : "可以继续推进。"
   },
   commands: [],
-  ...(webSearchEnabled ? { lookup_requests: [] } : {}),
+  lookup_requests: [],
   source_refs: webSearchEnabled
     ? ["https://developers.example.invalid/codex"]
     : [messageId]

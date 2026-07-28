@@ -9,6 +9,7 @@ const SAFE_MESSAGES = Object.freeze({
   INFERENCE_TIMEOUT: "Codex inference timed out",
   INFERENCE_UNAVAILABLE: "Codex executable is unavailable"
 });
+const LOOKUP_INPUT_JSON_MAX_BYTES = 8 * 1024;
 
 function timeout(value) {
   if (!Number.isInteger(value) || value < 1000 || value > 600000) {
@@ -26,6 +27,21 @@ function exactFields(value, fields) {
 
 function nonEmptyText(value) {
   return typeof value === "string" && value.length > 0;
+}
+
+function normalizeLookupRequest(request) {
+  let normalized = request;
+  if (typeof request?.input === "string") {
+    if (
+      Buffer.byteLength(request.input) < 2 ||
+      Buffer.byteLength(request.input) > LOOKUP_INPUT_JSON_MAX_BYTES
+    ) {
+      throw new TypeError("lookup input JSON is outside the trusted size limit");
+    }
+    normalized = { ...request, input: JSON.parse(request.input) };
+  }
+  validateCapabilityLookupRequest(normalized);
+  return normalized;
 }
 
 function assertDecisionEnvelope(decision, event) {
@@ -80,14 +96,17 @@ function assertDecisionEnvelope(decision, event) {
   if (!Array.isArray(lookupRequests) || lookupRequests.length > 1) {
     throw new InferenceError("INFERENCE_INVALID_OUTPUT");
   }
+  const normalizedLookupRequests = [];
   for (const request of lookupRequests) {
     try {
-      validateCapabilityLookupRequest(request);
+      normalizedLookupRequests.push(normalizeLookupRequest(request));
     } catch {
       throw new InferenceError("INFERENCE_INVALID_OUTPUT");
     }
   }
-  return decision;
+  return Object.hasOwn(decision, "lookup_requests")
+    ? { ...decision, lookup_requests: normalizedLookupRequests }
+    : decision;
 }
 
 function classifyError(error) {
