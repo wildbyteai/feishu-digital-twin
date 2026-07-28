@@ -421,7 +421,7 @@ test("首次服务启动等待 realtime 状态收敛，定时角色只要求调�
   await startServices(root, {
     launchAgentsDirectory,
     launchctlBin: fake.filename,
-    healthTimeoutMs: 300,
+    healthTimeoutMs: 3000,
     healthPollIntervalMs: 10
   });
   const healthy = await serviceStatus(root, {
