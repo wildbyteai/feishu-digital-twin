@@ -22,6 +22,10 @@
 | `codex_timeout_ms` | 限制单次推理时间 | 部署者策略 | 普通 | 私有配置 | 无 | 1000–600000，默认 120000 | 合成 Doctor | 超时能失败关闭 | 过短频繁超时 | 调整后重新 Doctor |
 | `max_ai_action_rounds` | 限制执行反馈循环 | 产品安全上限 | 普通 | 私有配置 | 无 | 1–3，默认 3 | Schema 与合成测试 | 不出现无界循环 | 超出上限 | 恢复到 1–3 |
 | `production_data_approved` | 记录 Codex 数据处理许可 | 部署者明确确认 | 企业安全 | 私有配置 | 无 | 布尔值，默认 false | `--approve-production-data` | 未确认时生产失败关闭 | 错把登录等同于许可 | 冻结并重新确认真实环境 |
+| `public_web_search_approved` | 单独批准当前消息中的最小公开查询词进入公共 Web Search | 部署者明确确认 | 外部数据边界 | 私有配置 | 仅 Codex 内置 Web Search | 可选布尔值；缺失或 false 时关闭 | Schema 与隔离合成查询 | 仅 true 时公开 `public.web.search` 能力 | 错把生产数据许可等同于联网许可 | 设为 false，保持业务推理离线 |
+| `private_capability_packs` | 列出本实例显式安装的声明式私有能力包 ID | 由 setup 从源码树外 `0600` manifest 验证并安装 | 内部集成标识 | 私有配置；能力包正文位于同目录的私有 `capabilities` 根 | 当前用户读取私有能力包 | 可选唯一列表；公开示例为 `[]` | setup 校验目录、Schema、包 ID 和绑定；Doctor 只做合成结构检查 | 只有列出的包会被加载 | 误把路径、server 或工具名写入配置；列出未安装包 | 冻结并恢复为 `[]`，不扫描本机其他 MCP |
+| `allowed_capabilities` | 定义 Web/MCP 语义能力的本机最高上限 | 部署者从已安装能力标识中选择 | 高敏外部数据边界 | 私有配置 | 无额外平台权限；实际 Adapter 另行授权 | 可选唯一列表；公开示例为 `[]`；旧配置省略时使用已安装能力集合 | config 策略校验、Base 取交集、Doctor | Base 和 AI 都不能增加未列出的能力 | 包已安装但能力未知；试图用 Base 扩权 | 改为空列表或已安装子集并保持冻结 |
+| `required_capabilities` | 标记结构不可用时应让整体 Doctor 降级的能力 | 部署者可靠性策略 | 内部运行策略 | 私有配置 | 无 | 可选唯一列表，默认 `[]`，且必须是 `allowed_capabilities` 子集 | config 与 Doctor 校验 | 必需能力异常显示 degraded；可选能力异常只影响对应查询 | 标记了未允许能力 | 删除错误项；不静默切换其他 Adapter |
 | `production_enabled` | 旧版本机运行开关 | 旧 v1 配置 | 内部 | 私有配置 | 无 | 仅 v1 兼容读取；v2 禁止 | config/status 兼容测试 | 旧实例可在升级后继续读取 | 与 v2 `control` 混用 | 保持冻结并显式迁移到 v2 |
 | `control` | 选择唯一运行开关与规则来源 | 普通 setup 固定生成 Base；高级配置或旧部署可显式使用 local | 内部 | 私有配置 | 无 | v2 必填：`local` 或 `base`；普通新安装固定 `base`，v1 禁止 | setup/config 校验与 status 读回 | 不出现本机/Base 双开关 | 模式与子字段或规则来源冲突 | 冻结并保留一个权威来源 |
 | `supplement_lookback_minutes` | 首次或断点恢复防漏窗口 | 调度策略 | 普通 | 私有配置 | user 消息读取 | 1–1440，默认 5 | 补读合成测试 | 只影响恢复回看，不改变轮询频率 | 误当调度间隔 | 恢复默认并检查 schedule |
@@ -35,6 +39,15 @@
 | `authority_rules` | 保存 AI 自然语言职责和知识路由 | 部署者规则 | 企业规则 | 私有配置 | 规则涉及的能力权限 | 仅高级 local 配置或旧部署可选；普通新安装写入 Base“个性化规则” | prompt 合成测试 | 不突破可信硬门 | Base 模式与本机规则同时存在 | 统一迁入 Base“个性化规则”；旧部署可暂时保留 local 模式 |
 
 新普通 setup 和公开示例都生成 v2 Base 模式。v1 仅用于读取旧实例，不会被后台静默改写：没有 `console` 时按 local 解释，有 `console` 时按 base 解释，并保留旧 `production_enabled` 与旧规则语义。v2 local 也继续作为高级配置和旧部署兼容入口，但不再是普通引导式安装的默认结果。迁移时应先冻结、停止服务，生成明确的 v2 候选，再使用 `config update` 和 Doctor 验证。
+
+## 能力配置与能力包版本
+
+- 旧 v1/v2 配置未出现 `private_capability_packs`、`allowed_capabilities` 和 `required_capabilities` 时继续有效：没有私有包就得到空能力集合；缺少 `public_web_search_approved` 或值为 false 时继续保持公开联网关闭。
+- 公共 JSON 示例显式写出三个空数组，避免把示例误解为已安装私有能力。配置只保存包 ID 和语义能力 ID，不保存私有 manifest 路径、MCP server reference、工具名、地址或凭据。
+- 能力包结构兼容由 `schema_version` 决定，当前只接受 `1`。`pack_version` 必须是三段语义版本，用于部署者审计和候选比较，但不会绕过完整 Schema、只读风险、信任域、工具白名单和输入限制校验。
+- 新增能力包、扩大 `allowed_capabilities`，或改变同一包的 server、工具、信任域、操作和输入边界，都必须通过 setup 提供 `--capability-pack`，并对新增内部边界使用 `--approve-capability-trust-zone internal`。普通 `config update --config` 只能收紧或撤销。
+- Base“允许能力”严格为“继承”时使用本机上限；显式列表只能取交集。未知项、重复项、空值、混合“继承”或越过本机上限都会失败关闭。
+- 从 `private_capability_packs` 删除包 ID，并同步从 allowed/required 列表删除相关能力后，该包不会再加载。确认不需要回退后再删除 Git 外私有文件，不能把它移入源码树备份。
 
 ## `control` 子字段
 

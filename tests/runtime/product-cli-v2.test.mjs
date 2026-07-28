@@ -21,12 +21,13 @@ import { spawn, spawnSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
+import { runProductCli } from "../../product/src/cli.mjs";
 import { runServiceRole } from "../../product/src/service-host.mjs";
 
 const projectRoot = path.resolve(import.meta.dirname, "../..");
 const cliPath = path.join(projectRoot, "bin/feishu-digital-twin.mjs");
 const fakeCodexFixture = path.join(projectRoot, "tests/fixtures/bin/codex");
-const CURRENT_VERSION = "0.1.12";
+const CURRENT_VERSION = "0.1.13";
 let syntheticInstanceSequence = 0;
 
 function runCli(executable, args, { env = {}, expected = 0 } = {}) {
@@ -46,6 +47,51 @@ function run(args, options = {}) {
 
 function json(result) {
   return JSON.parse(result.stdout.trim());
+}
+
+async function runDirect(args, { resolveCapabilityServer } = {}) {
+  let stdout = "";
+  let stderr = "";
+  const status = await runProductCli({
+    argv: args,
+    packageRoot: projectRoot,
+    stdout: { write: (chunk) => { stdout += chunk; } },
+    stderr: { write: (chunk) => { stderr += chunk; } },
+    environment: process.env,
+    resolveCapabilityServer
+  });
+  return { status, stdout, stderr };
+}
+
+function privateCapabilityPackFixture({
+  packId = "example.records",
+  capabilityId = "example.records.read",
+  serverRef = "example-managed-records",
+  toolName = "records.get",
+  allowedFields = ["record_id"],
+  requiredFields = ["record_id"],
+  maxBytes = 1024
+} = {}) {
+  const directory = mkdtempSync(path.join(tmpdir(), "twin-private-capability-"));
+  chmodSync(directory, 0o700);
+  const filename = path.join(directory, `${packId}.json`);
+  const pack = JSON.parse(readFileSync(
+    path.join(projectRoot, "examples/capability-pack.example.json"),
+    "utf8"
+  ));
+  pack.pack_id = packId;
+  pack.server_ref = serverRef;
+  pack.tools[0].name = toolName;
+  pack.capabilities[0].capability = capabilityId;
+  pack.capabilities[0].operations[0].tool = toolName;
+  pack.capabilities[0].operations[0].input_constraints = {
+    allowed_fields: allowedFields,
+    required_fields: requiredFields,
+    max_bytes: maxBytes
+  };
+  writeFileSync(filename, `${JSON.stringify(pack, null, 2)}\n`, { mode: 0o600 });
+  chmodSync(filename, 0o600);
+  return { filename, pack };
 }
 
 function snapshotDirectory(directory) {
@@ -754,6 +800,8 @@ test("公开 CLI 帮助只暴露产品级命令", () => {
   assert.match(result.stdout, /--principal-aliases LIST/u);
   assert.match(result.stdout, /--message-scope SCOPE/u);
   assert.match(result.stdout, /--capabilities LIST/u);
+  assert.match(result.stdout, /--capability-pack PATH/u);
+  assert.match(result.stdout, /--approve-capability-trust-zone Z/u);
   assert.match(result.stdout, /--domains LIST/u);
   assert.match(result.stdout, /--console-base-token TOKEN/u);
   assert.match(result.stdout, /--console-runtime-table NAME/u);
@@ -769,6 +817,7 @@ test("公开 CLI 帮助只暴露产品级命令", () => {
   assert.match(result.stdout, /运行配置.*exactly one row/su);
   assert.match(result.stdout, /数字分身启用.*only day-to-day master switch/su);
   assert.match(result.stdout, /允许域.*继承/su);
+  assert.match(result.stdout, /允许能力.*继承/su);
   assert.match(result.stdout, /群级规则.*zero or more rows/su);
   assert.match(result.stdout, /Base control is required for a complete guided setup/u);
   assert.match(result.stdout, /use --create-missing-resources to create it safely/u);
@@ -2925,7 +2974,7 @@ test("setup 对控制 Base 缺少必要字段时失败并回滚", () => {
     assert.equal(error.setup_guide.runtime_table.record_requirement, "exactly_one");
     assert.deepEqual(
       error.setup_guide.runtime_table.fields.map((field) => field.name),
-      ["名称", "数字分身启用", "允许域", "个性化规则"]
+      ["名称", "数字分身启用", "允许域", "允许能力", "个性化规则"]
     );
     assert.equal(
       error.setup_guide.runtime_table.fields.find(({ name }) => name === "名称").required,
@@ -3773,6 +3822,288 @@ test("config update 在冻结但服务仍加载时要求先停止服务", () => 
   );
 });
 
+test("configure 安装显式私有能力包并要求独立 internal 信任确认", () => {
+  const { root } = initRoot("private-capability-configure");
+  const tools = codexFixture();
+  const { filename, pack } = privateCapabilityPackFixture();
+  const candidate = writeCandidate(root, tools, {
+    private_capability_packs: [pack.pack_id],
+    allowed_capabilities: [pack.capabilities[0].capability],
+    required_capabilities: []
+  });
+  const args = [
+    "--root", root,
+    "configure",
+    "--config", candidate,
+    "--capability-pack", filename,
+    "--codex-bin", tools.codexBin,
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data",
+    "--approve-message-scope"
+  ];
+
+  const blocked = run(args, { expected: 1 });
+  assert.equal(JSON.parse(blocked.stderr).code, "CAPABILITY_TRUST_CONFIRMATION_REQUIRED");
+  assert.equal(existsSync(path.join(root, "private/config.json")), false);
+
+  const configured = json(run([
+    ...args,
+    "--approve-capability-trust-zone", "internal"
+  ]));
+  assert.equal(configured.status, "configured");
+  const active = JSON.parse(readFileSync(path.join(root, "private/config.json"), "utf8"));
+  assert.deepEqual(active.private_capability_packs, [pack.pack_id]);
+  assert.deepEqual(active.allowed_capabilities, [pack.capabilities[0].capability]);
+  const installedPack = path.join(root, "private/capabilities", `${pack.pack_id}.json`);
+  assert.equal(statSync(path.dirname(installedPack)).mode & 0o777, 0o700);
+  assert.equal(statSync(installedPack).mode & 0o777, 0o600);
+
+  const replacement = privateCapabilityPackFixture({
+    allowedFields: ["record_id", "query"],
+    maxBytes: 2048
+  });
+  const replacementCandidate = writeCandidate(root, tools, active);
+  const replaced = run([
+    "--root", root,
+    "setup",
+    "--config", replacementCandidate,
+    "--capability-pack", replacement.filename
+  ], { expected: 1 });
+  assert.equal(JSON.parse(replaced.stderr).code, "CAPABILITY_TRUST_CONFIRMATION_REQUIRED");
+  assert.equal(
+    JSON.parse(readFileSync(installedPack, "utf8")).server_ref,
+    pack.server_ref
+  );
+});
+
+test("setup 在可选私有能力不可用时仍完成且只报告 warning", () => {
+  const root = path.join(
+    mkdtempSync(path.join(tmpdir(), "twin-private-capability-setup-")),
+    "install"
+  );
+  const tools = codexFixture();
+  const { filename, pack } = privateCapabilityPackFixture();
+  const candidate = writeCandidate(root, tools, {
+    private_capability_packs: [pack.pack_id],
+    allowed_capabilities: [pack.capabilities[0].capability],
+    required_capabilities: []
+  });
+  const launchctl = fakeStatefulLaunchctl(
+    mkdtempSync(path.join(tmpdir(), "twin-private-capability-setup-launchctl-"))
+  );
+  const result = json(run([
+    "--root", root,
+    "--launch-agents-dir", path.join(path.dirname(root), "launch-agents"),
+    "--launchctl-bin", launchctl.filename,
+    "setup",
+    "--config", candidate,
+    "--capability-pack", filename,
+    "--codex-bin", tools.codexBin,
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data",
+    "--approve-message-scope",
+    "--approve-capability-trust-zone", "internal"
+  ]));
+  assert.equal(result.status, "setup-complete");
+  assert.equal(result.readiness, "safe-but-disabled");
+  assert.deepEqual(result.doctor.warning_checks, [{
+    name: "capabilities",
+    code: "CAPABILITY_UNAVAILABLE"
+  }]);
+});
+
+test("Doctor 只列语义能力与稳定代码且绝不调用业务工具", async () => {
+  const { root } = initRoot("private-capability-doctor");
+  const tools = codexFixture();
+  const { filename, pack } = privateCapabilityPackFixture();
+  const disabled = privateCapabilityPackFixture({
+    packId: "example.archive",
+    capabilityId: "example.archive.read",
+    serverRef: "example-managed-archive",
+    toolName: "archive.get"
+  });
+  const candidate = writeCandidate(root, tools, {
+    private_capability_packs: [pack.pack_id, disabled.pack.pack_id],
+    allowed_capabilities: [pack.capabilities[0].capability, "public.web.search"],
+    required_capabilities: ["public.web.search"],
+    public_web_search_approved: true
+  });
+  json(run([
+    "--root", root,
+    "configure",
+    "--config", candidate,
+    "--capability-pack", filename,
+    "--capability-pack", disabled.filename,
+    "--codex-bin", tools.codexBin,
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data",
+    "--approve-message-scope",
+    "--approve-capability-trust-zone", "internal"
+  ]));
+
+  const unavailable = await runDirect(["--root", root, "doctor"]);
+  assert.equal(unavailable.status, 0);
+  const optional = json(unavailable);
+  assert.equal(optional.healthy, true);
+  assert.equal(optional.checks.capabilities.status, "warning");
+  assert.equal(
+    optional.checks.capabilities.capabilities[0].capability,
+    pack.capabilities[0].capability
+  );
+  assert.equal(
+    optional.checks.capabilities.capabilities[0].code,
+    "CAPABILITY_UNAVAILABLE"
+  );
+  assert.equal(optional.checks.capabilities.capabilities[0].latency_ms >= 0, true);
+  assert.deepEqual(optional.checks.capabilities.capabilities[1], {
+    capability: "public.web.search",
+    code: "READY",
+    latency_ms: 0,
+    required: true
+  });
+
+  for (const resolveCapabilityServer of [
+    async () => { throw new Error("offline"); },
+    async () => ({ async listTools() { return { tools: [] }; } }),
+    async () => ({
+      async listTools() {
+        return { tools: [{ name: pack.tools[0].name }] };
+      },
+      async callTool() {
+        throw new Error("must not be called by Doctor");
+      }
+    })
+  ]) {
+    const failedClient = json(await runDirect(["--root", root, "doctor"], {
+      resolveCapabilityServer
+    }));
+    assert.equal(failedClient.healthy, true);
+    assert.equal(failedClient.checks.capabilities.status, "warning");
+    assert.equal(
+      failedClient.checks.capabilities.capabilities[0].code,
+      "CAPABILITY_UNAVAILABLE"
+    );
+  }
+
+  const timeoutStartedAt = Date.now();
+  const timedOut = json(await runDirect(["--root", root, "doctor"], {
+    resolveCapabilityServer: async () => new Promise(() => {})
+  }));
+  assert.equal(Date.now() - timeoutStartedAt < 2500, true);
+  assert.equal(timedOut.healthy, true);
+  assert.equal(timedOut.checks.capabilities.status, "warning");
+
+  let listToolsCalls = 0;
+  let callToolCalls = 0;
+  const resolvedServerRefs = [];
+  const ready = await runDirect(["--root", root, "doctor"], {
+    resolveCapabilityServer: async (serverRef) => {
+      resolvedServerRefs.push(serverRef);
+      return ({
+      async listTools() {
+        listToolsCalls += 1;
+        return {
+          tools: [{
+            name: pack.tools[0].name,
+            annotations: { readOnlyHint: true }
+          }, {
+            name: "ignored.extra",
+            annotations: { readOnlyHint: false }
+          }]
+        };
+      },
+      async callTool() {
+        callToolCalls += 1;
+        throw new Error("must not be called by Doctor");
+      }
+      });
+    }
+  });
+  assert.equal(ready.status, 0);
+  const health = json(ready);
+  assert.equal(health.checks.capabilities.status, "pass");
+  assert.equal(listToolsCalls, 1);
+  assert.equal(callToolCalls, 0);
+  assert.deepEqual(resolvedServerRefs, [pack.server_ref]);
+  const projected = JSON.stringify(health.checks.capabilities);
+  assert.equal(projected.includes(pack.server_ref), false);
+  assert.equal(projected.includes(pack.tools[0].name), false);
+  assert.equal(projected.includes(filename), false);
+
+  const configPath = path.join(root, "private/config.json");
+  const required = JSON.parse(readFileSync(configPath, "utf8"));
+  required.required_capabilities = [pack.capabilities[0].capability];
+  writeFileSync(configPath, `${JSON.stringify(required, null, 2)}\n`, { mode: 0o600 });
+  chmodSync(configPath, 0o600);
+  const degraded = await runDirect(["--root", root, "doctor"]);
+  assert.equal(degraded.status, 1);
+  const requiredHealth = json(degraded);
+  assert.equal(requiredHealth.healthy, false);
+  assert.equal(requiredHealth.ready_for_service, false);
+  assert.equal(requiredHealth.checks.capabilities.status, "fail");
+  assert.equal(requiredHealth.checks.capabilities.capabilities[0].required, true);
+});
+
+test("config update 只能收紧或撤销能力且不能重新扩权", () => {
+  const { root } = initRoot("private-capability-update");
+  const tools = codexFixture();
+  const { filename, pack } = privateCapabilityPackFixture();
+  const initialCandidate = writeCandidate(root, tools, {
+    private_capability_packs: [pack.pack_id],
+    allowed_capabilities: [pack.capabilities[0].capability],
+    required_capabilities: []
+  });
+  json(run([
+    "--root", root,
+    "configure",
+    "--config", initialCandidate,
+    "--capability-pack", filename,
+    "--codex-bin", tools.codexBin,
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data",
+    "--approve-message-scope",
+    "--approve-capability-trust-zone", "internal"
+  ]));
+  const activePath = path.join(root, "private/config.json");
+  const active = JSON.parse(readFileSync(activePath, "utf8"));
+
+  const narrowedPath = writeCandidate(root, tools, {
+    ...active,
+    allowed_capabilities: []
+  });
+  assert.equal(json(run([
+    "--root", root,
+    "config", "update",
+    "--config", narrowedPath
+  ])).status, "updated");
+
+  const expandedPath = writeCandidate(root, tools, {
+    ...active,
+    allowed_capabilities: [pack.capabilities[0].capability]
+  });
+  const expanded = run([
+    "--root", root,
+    "config", "update",
+    "--config", expandedPath
+  ], { expected: 1 });
+  assert.equal(JSON.parse(expanded.stderr).code, "CAPABILITY_SETUP_REQUIRED");
+
+  const revokedPath = writeCandidate(root, tools, {
+    ...active,
+    private_capability_packs: [],
+    allowed_capabilities: [],
+    required_capabilities: []
+  });
+  assert.equal(json(run([
+    "--root", root,
+    "config", "update",
+    "--config", revokedPath
+  ])).status, "updated");
+  const revoked = JSON.parse(readFileSync(activePath, "utf8"));
+  assert.deepEqual(revoked.private_capability_packs, []);
+  assert.deepEqual(revoked.allowed_capabilities, []);
+});
+
 test("Codex 内部配置由 Codex 自己管理，项目不读取或指纹化", () => {
   const { root } = initRoot("codex-owned-config");
   const tools = codexFixture();
@@ -3948,6 +4279,54 @@ test("daily-memory 按主体时区补跑、失败重试且成功后每日只执�
     dailyMemoryRunner
   }), 0);
   assert.deepEqual(attempts, ["2026-07-23", "2026-07-23", "2026-07-24"]);
+});
+
+test("daily-memory 升级后只记录一次同日幂等证据而不重复业务动作", async () => {
+  const { root } = initRoot("daily-schedule-evidence");
+  configureRoot(root, codexFixture(), {
+    overrides: {
+      daily_memory: {
+        folder_token: "fixture_daily_memory_folder",
+        folder_name: "合成每日工作记忆"
+      }
+    }
+  });
+  const markerPath = path.join(root, "private/daily-memory-schedule.json");
+  writeFileSync(markerPath, `${JSON.stringify({
+    last_success_at: "2026-07-24T15:00:00.000Z",
+    last_success_local_date: "2026-07-24",
+    last_success_target_date: "2026-07-23"
+  })}\n`, { mode: 0o600 });
+  let businessRuns = 0;
+  const evidence = [];
+  const options = {
+    dailyMemoryRunner: async () => {
+      businessRuns += 1;
+      return 0;
+    },
+    dailyMemoryEvidenceLogger: async ({ targetDate }) => {
+      evidence.push(targetDate);
+      return 0;
+    }
+  };
+
+  assert.equal(await runServiceRole(root, "daily_memory", {
+    ...options,
+    now: new Date("2026-07-24T15:01:00.000Z")
+  }), 0);
+  assert.equal(await runServiceRole(root, "daily_memory", {
+    ...options,
+    now: new Date("2026-07-24T15:02:00.000Z")
+  }), 0);
+
+  assert.equal(businessRuns, 0);
+  assert.deepEqual(evidence, ["2026-07-23"]);
+  assert.deepEqual(JSON.parse(readFileSync(markerPath, "utf8")), {
+    last_success_at: "2026-07-24T15:00:00.000Z",
+    last_success_local_date: "2026-07-24",
+    last_success_target_date: "2026-07-23",
+    last_evidence_version: CURRENT_VERSION
+  });
 });
 
 test("supplement 按可选 ISO 工作日集合选择工作与非工作间隔", async () => {

@@ -3,7 +3,19 @@
   "forbidden_literals": [
     "Replace With A Private Identity"
   ],
+  "organization_identifiers": [
+    "Replace With A Private Organization Identifier"
+  ],
+  "private_capability_pack_ids": [
+    "Replace With A Private Capability Pack Identifier"
+  ],
   "private_domains": [
     "private.example.invalid"
+  ],
+  "private_mcp_server_refs": [
+    "Replace With A Private MCP Server Reference"
+  ],
+  "private_tool_names": [
+    "Replace With A Private Tool Name"
   ]
 }

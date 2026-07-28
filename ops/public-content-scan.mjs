@@ -2,6 +2,7 @@ import { lstat, readFile } from "node:fs/promises";
 import path from "node:path";
 
 const SCANNER_VERSION = 1;
+const PRIVATE_PATH_PLACEHOLDER = "<private-path>";
 const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
 const EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@([A-Z0-9.-]+\.[A-Z]{2,})\b/giu;
 const PHONE_PATTERN = /(?<!\d)1[3-9]\d{9}(?!\d)/gu;
@@ -19,6 +20,13 @@ const FEISHU_RESOURCE_URL_PATTERN = /\bhttps?:\/\/(?:[A-Za-z0-9-]+\.)*(?:feishu\
 const PRIVATE_DOMAIN_PATTERN = /\b(?:https?:\/\/)?(?:[A-Za-z0-9-]+\.)+(?:internal|local|lan|corp)(?=[:/\s"'<>]|$)(?::\d+)?(?:\/[^\s"'<>]*)?/giu;
 const CODE_SOURCE_PATH_PATTERN = /\.(?:[cm]?js|jsx|ts|tsx)$/iu;
 const SENSITIVE_PRIVATE_PATH_SUFFIXES = [".privacy-key"];
+const PRIVATE_LITERAL_POLICY_FIELDS = Object.freeze([
+  "forbidden_literals",
+  "organization_identifiers",
+  "private_capability_pack_ids",
+  "private_mcp_server_refs",
+  "private_tool_names"
+]);
 const CANDIDATE_METADATA_PATHS = new Set([
   "SHA256SUMS",
   "provenance.intoto.jsonl",
@@ -105,12 +113,19 @@ export function validatePrivateScanPolicy(policy) {
   }
   requireSortedStrings(policy.forbidden_literals, "forbidden_literals", { allowEmpty: false });
   requireSortedStrings(policy.private_domains, "private_domains");
-  if (policy.forbidden_literals.some(templatePlaceholder) ||
+  for (const field of PRIVATE_LITERAL_POLICY_FIELDS.slice(1)) {
+    if (policy[field] !== undefined) requireSortedStrings(policy[field], field);
+  }
+  if (privatePolicyLiterals(policy).some(templatePlaceholder) ||
       policy.private_domains.some((value) => templatePlaceholder(value) ||
         value.toLowerCase().endsWith(".example.invalid"))) {
     throw new TypeError("private scan policy placeholders must be replaced");
   }
   return policy;
+}
+
+function privatePolicyLiterals(policy) {
+  return PRIVATE_LITERAL_POLICY_FIELDS.flatMap((field) => policy[field] ?? []);
 }
 
 export async function loadPrivateScanPolicy(filename) {
@@ -207,9 +222,13 @@ export function mergePrivateScanPolicyWithInstanceConfig(policy, config) {
     throw new TypeError("a validated instance config is required");
   }
   const literals = new Set(policy.forbidden_literals);
+  const privateCapabilityPackIds = new Set(policy.private_capability_pack_ids ?? []);
   const domains = new Set(policy.private_domains);
   addPrivateLiteral(literals, config.instance_id, { opaque: true });
   addPrivateLiteral(literals, config.profile, { opaque: true });
+  for (const packId of config.private_capability_packs ?? []) {
+    addPrivateLiteral(privateCapabilityPackIds, packId, { opaque: true });
+  }
   addPrivateLiteral(literals, config.principal?.name, { identity: true });
   addPrivateLiteral(literals, config.principal?.open_id, { opaque: true });
   for (const name of config.principal?.address_names ?? []) {
@@ -236,7 +255,11 @@ export function mergePrivateScanPolicyWithInstanceConfig(policy, config) {
   return validatePrivateScanPolicy({
     schema_version: 1,
     forbidden_literals: sortedUnique(literals),
-    private_domains: sortedUnique(domains)
+    organization_identifiers: sortedUnique(policy.organization_identifiers ?? []),
+    private_capability_pack_ids: sortedUnique(privateCapabilityPackIds),
+    private_domains: sortedUnique(domains),
+    private_mcp_server_refs: sortedUnique(policy.private_mcp_server_refs ?? []),
+    private_tool_names: sortedUnique(policy.private_tool_names ?? [])
   });
 }
 
@@ -400,19 +423,38 @@ function addFinding(findings, code) {
   if (!findings.some((finding) => finding.code === code)) findings.push({ code });
 }
 
-function withoutSha256Digests(content) {
-  return content.replace(/\b[A-Fa-f0-9]{64}\b/gu, "");
+function addPathFinding(findings, code, relativePath) {
+  if (!findings.some((finding) => (
+    finding.code === code && finding.path === relativePath
+  ))) {
+    findings.push({ code, path: relativePath });
+  }
 }
 
-function scanText(content, policy, relativePath, { ignoreSha256DigestIdentifiers = false } = {}) {
+function scanPrivatePolicyMarkers(content, policy) {
   const findings = [];
   const lowered = content.toLowerCase();
-  for (const literal of policy.forbidden_literals) {
+  for (const literal of privatePolicyLiterals(policy)) {
     if (lowered.includes(literal.toLowerCase())) addFinding(findings, "forbidden-literal");
   }
   for (const domain of policy.private_domains) {
     if (lowered.includes(domain.toLowerCase())) addFinding(findings, "private-domain");
   }
+  return findings;
+}
+
+function publicFindingPath(relativePath, policy) {
+  return scanPrivatePolicyMarkers(relativePath, policy).length > 0
+    ? PRIVATE_PATH_PLACEHOLDER
+    : relativePath;
+}
+
+function withoutSha256Digests(content) {
+  return content.replace(/\b[A-Fa-f0-9]{64}\b/gu, "");
+}
+
+function scanText(content, policy, relativePath, { ignoreSha256DigestIdentifiers = false } = {}) {
+  const findings = scanPrivatePolicyMarkers(content, policy);
   for (const match of content.matchAll(EMAIL_PATTERN)) {
     if (match[1]?.toLowerCase() !== "example.invalid") addFinding(findings, "email-address");
   }
@@ -472,21 +514,25 @@ function sensitivePrivatePath(value) {
 }
 
 function scanBuffer(relativePath, buffer, policy, findings, stage) {
+  const findingPath = publicFindingPath(relativePath, policy);
   if (sensitivePrivatePath(relativePath)) {
-    findings.push({ code: "sensitive-private-path", path: relativePath });
+    addPathFinding(findings, "sensitive-private-path", findingPath);
+  }
+  for (const finding of scanPrivatePolicyMarkers(relativePath, policy)) {
+    addPathFinding(findings, finding.code, findingPath);
   }
   let content;
   try {
     content = UTF8_DECODER.decode(buffer);
   } catch {
-    findings.push({ code: "non-utf8-content", path: relativePath });
+    addPathFinding(findings, "non-utf8-content", findingPath);
     return;
   }
   for (const finding of scanText(content, policy, relativePath, {
     ignoreSha256DigestIdentifiers: stage === "candidate-metadata" &&
       CANDIDATE_METADATA_PATHS.has(relativePath)
   })) {
-    findings.push({ ...finding, path: relativePath });
+    addPathFinding(findings, finding.code, findingPath);
   }
 }
 
@@ -499,11 +545,11 @@ export async function scanPublicBuffers({ files, policy, stage }) {
   for (const entry of files) {
     const relativePath = entry?.path;
     if (!normalizedRelativePath(relativePath)) {
-      findings.push({ code: "unsafe-scan-path", path: "<invalid>" });
+      addPathFinding(findings, "unsafe-scan-path", "<invalid>");
       continue;
     }
     if (!Buffer.isBuffer(entry?.content)) {
-      findings.push({ code: "file-read-failed", path: relativePath });
+      addPathFinding(findings, "file-read-failed", publicFindingPath(relativePath, policy));
       continue;
     }
     bytesScanned += entry.content.length;
@@ -528,7 +574,7 @@ export async function scanPublicFiles({ root, files, policy, stage }) {
   for (const entry of files) {
     const relativePath = typeof entry === "string" ? entry : entry?.path;
     if (!normalizedRelativePath(relativePath)) {
-      findings.push({ code: "unsafe-scan-path", path: "<invalid>" });
+      addPathFinding(findings, "unsafe-scan-path", "<invalid>");
       continue;
     }
     const target = path.join(root, ...relativePath.split("/"));
@@ -537,12 +583,12 @@ export async function scanPublicFiles({ root, files, policy, stage }) {
     try {
       metadata = await lstat(target);
       if (!metadata.isFile() || metadata.isSymbolicLink()) {
-        findings.push({ code: "non-regular-file", path: relativePath });
+        addPathFinding(findings, "non-regular-file", publicFindingPath(relativePath, policy));
         continue;
       }
       buffer = await readFile(target);
     } catch {
-      findings.push({ code: "file-read-failed", path: relativePath });
+      addPathFinding(findings, "file-read-failed", publicFindingPath(relativePath, policy));
       continue;
     }
     bytesScanned += buffer.length;

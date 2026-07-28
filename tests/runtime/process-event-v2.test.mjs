@@ -156,6 +156,22 @@ test("AI 不使用草稿模式，内外部群都直接决定忽略、回复或�
   }), /decision\.outcome is invalid/u);
 });
 
+test("每轮最多接受一条结构化能力查询", async () => {
+  const lookup = {
+    capability: "fixture.workflow.read",
+    operation: "get",
+    input: { workflow_id: "fixture-42" },
+    reason: "核实流程状态"
+  };
+  await assert.rejects(() => processEvent(event(), {
+    config: config(),
+    runtimeState: { getRuntimeState: () => ({ frozen: false }) },
+    runCodex: async () => decision({
+      lookup_requests: [lookup, lookup]
+    })
+  }), /cannot contain more than one query per round/u);
+});
+
 test("代表权冻结时不公开发言或执行动作", async () => {
   const frozen = await processEvent(event(), {
     config: config(),
@@ -269,4 +285,204 @@ test("主体用户在群里的普通实时发言保持忽略", async () => {
   assert.equal(result.outcome, "ignore");
   assert.equal(result.reason_code, "PRINCIPAL_MESSAGE");
   assert.equal(codexCalls, 0);
+});
+
+test("结构化引用没有可读内容时不调用 AI，直接建议原会话人工处理", async () => {
+  let codexCalls = 0;
+  const result = await processEvent(event({
+    event_id: "evt-unreadable-context",
+    chat_id: "oc_unreadable_context",
+    chat_type: "p2p",
+    message_id: "om-unreadable-context",
+    text: "请处理我回复的内容",
+    parent_message_id: "om-unreadable-parent",
+    reply_to_message_id: "om-unreadable-parent",
+    signals: {
+      context_lookup_required: false,
+      context_unreadable: true
+    },
+    context: [],
+    context_meta: {
+      fetched: true,
+      scope: "reply",
+      count: 0,
+      limit: 20
+    }
+  }), {
+    config: config(),
+    runtimeState: { getRuntimeState: () => ({ frozen: false }) },
+    runCodex: async () => {
+      codexCalls += 1;
+      return decision();
+    }
+  });
+
+  assert.equal(codexCalls, 0);
+  assert.equal(result.outcome, "reply");
+  assert.equal(result.response.mode, "suggestion");
+  assert.equal(
+    result.response.text,
+    "🤖【建议】当前消息或引用内容无法读取，无法据此形成可靠结论，请人工检查原消息或链接后继续处理。"
+  );
+  assert.deepEqual(result.executable_commands, []);
+  assert.deepEqual(result.confirmation_commands, []);
+});
+
+test("当前消息载荷不可读时不调用 AI，直接建议人工处理", async () => {
+  let codexCalls = 0;
+  const result = await processEvent(event({
+    event_id: "evt-unreadable-current",
+    chat_type: "p2p",
+    message_id: "om-unreadable-current",
+    text: "",
+    signals: { content_unreadable: true },
+    context: []
+  }), {
+    config: config(),
+    runtimeState: { getRuntimeState: () => ({ frozen: false }) },
+    runCodex: async () => {
+      codexCalls += 1;
+      return decision();
+    }
+  });
+
+  assert.equal(codexCalls, 0);
+  assert.equal(result.outcome, "reply");
+  assert.equal(result.reason_code, "CONTEXT_UNREADABLE");
+});
+
+test("已有链接时 AI 再次索要链接会被替换为确定性人工兜底", async () => {
+  const result = await processEvent(event({
+    event_id: "evt-repeat-link-request",
+    message_id: "om-repeat-link-request",
+    text: "请查看流程：https://example.invalid/workflow",
+    links: ["https://example.invalid/workflow"]
+  }), {
+    config: config(),
+    runtimeState: { getRuntimeState: () => ({ frozen: false }) },
+    runCodex: async (input) => decision({
+      event_id: input.event_id,
+      response: { mode: "suggestion", text: "请重新发送流程链接。" },
+      source_refs: [input.message_id]
+    })
+  });
+
+  assert.equal(
+    result.response.text,
+    "🤖【建议】当前消息或引用内容无法读取，无法据此形成可靠结论，请人工检查原消息或链接后继续处理。"
+  );
+});
+
+test("普通消息附带参考链接但无需读取正文时保留正常回复", async () => {
+  const result = await processEvent(event({
+    event_id: "evt-link-reference-acknowledgement",
+    message_id: "om-link-reference-acknowledgement",
+    text: "请回复收到，参考 https://example.invalid/workflow",
+    links: ["https://example.invalid/workflow"],
+    link_only: true
+  }), {
+    config: config(),
+    runtimeState: { getRuntimeState: () => ({ frozen: false }) },
+    runCodex: async (input) => decision({
+      event_id: input.event_id,
+      response: { mode: "representative", text: "收到。" },
+      source_refs: [input.message_id]
+    })
+  });
+
+  assert.equal(result.reason, "需要回应");
+  assert.equal(result.response.text, "🤖【数字分身】收到。");
+});
+
+test("链接目标正文未读取时 AI 生成的流程摘要会被替换", async () => {
+  const result = await processEvent(event({
+    event_id: "evt-fabricated-link-summary",
+    message_id: "om-fabricated-link-summary",
+    links: ["https://example.invalid/workflow"],
+    link_only: true,
+    execution_feedback: [{
+      command: { domain: "task", operation: "+get", reason: "读取无关任务" },
+      result: { status: "complete", data: { task: "已完成" } }
+    }]
+  }), {
+    config: config(),
+    runtimeState: { getRuntimeState: () => ({ frozen: false }) },
+    runCodex: async (input) => decision({
+      event_id: input.event_id,
+      response: { mode: "representative", text: "该流程已经审批通过，可以直接执行。" },
+      source_refs: [input.message_id]
+    })
+  });
+
+  assert.equal(result.response.mode, "suggestion");
+  assert.doesNotMatch(result.response.text, /已经审批通过/u);
+  assert.equal(result.reason_code, "CONTEXT_UNREADABLE");
+});
+
+test("与目标链接明确关联的可读正文允许形成回复", async () => {
+  const sourceUrl = "https://example.invalid/workflow";
+  const result = await processEvent(event({
+    event_id: "evt-verified-link-content",
+    message_id: "om-verified-link-content",
+    links: [sourceUrl],
+    execution_feedback: [{
+      command: { domain: "docs", operation: "+fetch", reason: "读取流程正文" },
+      result: {
+        status: "complete",
+        data: {
+          document: {
+            url: sourceUrl,
+            content: "流程要求由人工审批。"
+          }
+        }
+      }
+    }]
+  }), {
+    config: config(),
+    runtimeState: { getRuntimeState: () => ({ frozen: false }) },
+    runCodex: async (input) => decision({
+      event_id: input.event_id,
+      response: { mode: "representative", text: "该流程需要人工审批。" },
+      source_refs: [input.message_id]
+    })
+  });
+
+  assert.equal(result.response.mode, "representative");
+  assert.equal(result.response.text, "🤖【数字分身】该流程需要人工审批。");
+});
+
+test("查询来源链接移除 query 和 fragment 后仍可关联原始链接", async () => {
+  const result = await processEvent(event({
+    event_id: "evt-sanitized-link-source",
+    message_id: "om-sanitized-link-source",
+    links: ["https://example.invalid/workflow?id=42#approval"],
+    link_only: true,
+    capability_feedback: [{
+      round: 1,
+      request: {
+        capability: "fixture.workflow.read",
+        operation: "get",
+        input: { workflow_id: "fixture-42" },
+        reason: "读取流程正文"
+      },
+      result: {
+        capability: "fixture.workflow.read",
+        operation: "get",
+        status: "complete",
+        data: { content: "流程要求由人工审批。" },
+        source_refs: ["https://example.invalid/workflow"]
+      }
+    }]
+  }), {
+    config: config(),
+    runtimeState: { getRuntimeState: () => ({ frozen: false }) },
+    runCodex: async (input) => decision({
+      event_id: input.event_id,
+      response: { mode: "representative", text: "该流程需要人工审批。" },
+      source_refs: [input.message_id]
+    })
+  });
+
+  assert.equal(result.reason, "需要回应");
+  assert.equal(result.response.text, "🤖【数字分身】该流程需要人工审批。");
 });

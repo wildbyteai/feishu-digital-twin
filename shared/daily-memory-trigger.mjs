@@ -1,6 +1,7 @@
 const SYSTEM_SENDER_OPEN_ID = "system:daily-memory";
 
-function validIsoDate(value) {
+export function validIsoDate(value) {
+  if (typeof value !== "string") return false;
   const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value ?? "");
   if (!match) return false;
   const year = Number(match[1]);

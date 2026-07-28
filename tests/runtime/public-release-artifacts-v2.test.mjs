@@ -42,6 +42,14 @@ test("公开配置示例保持中性并默认拒绝处理生产数据", () => {
 
   assert.equal(config.schema_version, 2);
   assert.equal(config.production_data_approved, false);
+  assert.equal(config.public_web_search_approved, false);
+  assert.equal(fullConfig.public_web_search_approved, false);
+  assert.deepEqual(config.private_capability_packs, []);
+  assert.deepEqual(config.allowed_capabilities, []);
+  assert.deepEqual(config.required_capabilities, []);
+  assert.deepEqual(fullConfig.private_capability_packs, []);
+  assert.deepEqual(fullConfig.allowed_capabilities, []);
+  assert.deepEqual(fullConfig.required_capabilities, []);
   assert.deepEqual(config.control, { mode: "local", enabled: false });
   assert.equal(config.profile, "example_profile");
   assert.equal(config.message_scope, "bot_only");
@@ -146,8 +154,12 @@ test("公共快照清单覆盖现有完整产品面且排除私有区域", () =>
     "deploy/launchd/realtime.plist.template",
     "deploy/launchd/supplement.plist.template",
     "docs/dependencies.md",
+    "docs/adr/0007-capability-gateway-and-declarative-packs.md",
+    "docs/features/business-capabilities.en.md",
+    "docs/features/business-capabilities.md",
     "docs/public/README.md",
     "docs/public/product-spec.md",
+    "examples/capability-pack.example.json",
     "executor/src/lark-guard.mjs",
     "intake/bin/feishu-digital-twin-intake.mjs",
     "intake/src/intake-command.mjs",
@@ -157,10 +169,14 @@ test("公共快照清单覆盖现有完整产品面且排除私有区域", () =>
     "product/src/cli.mjs",
     "runtime/bin/feishu-digital-twin-runtime.mjs",
     "runtime/README.md",
+    "runtime/schemas/capability-pack.schema.json",
     "runtime/schemas/codex-decision.schema.json",
     "runtime/schemas/instance-config.schema.json",
     "runtime/src/daily-memory-privacy.mjs",
     "runtime/src/inference-adapter.mjs",
+    "runtime/src/private-capability-pack.mjs",
+    "runtime/src/capability-gateway.mjs",
+    "runtime/src/public-web-search-adapter.mjs",
     "runtime/src/twin-runtime.mjs",
     "shared/authority-labels.mjs",
     "shared/lark-capability-catalog.mjs",
@@ -169,6 +185,9 @@ test("公共快照清单覆盖现有完整产品面且排除私有区域", () =>
     "skills/feishu-digital-twin/SKILL.md",
     "tests/runtime/daily-memory-privacy-v2.test.mjs",
     "tests/runtime/privacy-projection-v2.test.mjs",
+    "tests/runtime/private-capability-pack-v2.test.mjs",
+    "tests/runtime/capability-gateway-v2.test.mjs",
+    "tests/runtime/public-web-search-v2.test.mjs",
     "tests/runtime/prompt-projection-v2.test.mjs",
     "tests/runtime/runtime-entry-v2.test.mjs",
     "tests/runtime/public-snapshot-v2.test.mjs"
@@ -390,14 +409,18 @@ test("本地 npm tarball 禁止 registry 发布并使用显式公共文件白名
     "bin/supervisor-core.mjs",
     "config.example.json",
     "deploy/launchd/daily-memory.plist.template",
+    "examples/capability-pack.example.json",
     "executor/src/lark-guard.mjs",
     "intake/bin/feishu-digital-twin-intake.mjs",
     "intake/src/intake-command.mjs",
     "product/src/cli.mjs",
     "runtime/bin/feishu-digital-twin-runtime.mjs",
+    "runtime/schemas/capability-pack.schema.json",
     "runtime/src/daily-memory-privacy.mjs",
+    "runtime/src/private-capability-pack.mjs",
     "shared/lark-capability-catalog.mjs",
-    "skills/feishu-digital-twin/SKILL.md"
+    "skills/feishu-digital-twin/SKILL.md",
+    "tests/runtime/private-capability-pack-v2.test.mjs"
   ];
   for (const requiredEntry of requiredEntries) {
     assert.equal(manifest.files.includes(requiredEntry), true, requiredEntry);
@@ -412,6 +435,39 @@ test("本地 npm tarball 禁止 registry 发布并使用显式公共文件白名
     assert.equal(metadata.isFile(), true, relativePath);
     assert.equal(metadata.isSymbolicLink(), false, relativePath);
   }
+});
+
+test("公共发行包含完整 Gateway、Web、MCP、Schema、Fake 与契约测试", () => {
+  const manifest = readJson("package.json");
+  const packaged = new Set(manifest.files);
+  const requiredEntries = [
+    "examples/capability-pack.example.json",
+    "runtime/schemas/capability-pack.schema.json",
+    "runtime/src/capability-gateway.mjs",
+    "runtime/src/private-capability-pack.mjs",
+    "runtime/src/public-web-search-adapter.mjs",
+    "tests/runtime/capability-gateway-v2.test.mjs",
+    "tests/runtime/private-capability-pack-v2.test.mjs",
+    "tests/runtime/public-web-search-v2.test.mjs"
+  ];
+  for (const relativePath of requiredEntries) {
+    assert.equal(packaged.has(relativePath), true, relativePath);
+  }
+
+  assert.match(
+    readFileSync(path.join(projectRoot, "runtime/src/capability-gateway.mjs"), "utf8"),
+    /export class CapabilityGateway[\s\S]*export class FakeCapabilityAdapter/u
+  );
+  const mcpAdapter = readFileSync(
+    path.join(projectRoot, "runtime/src/private-capability-pack.mjs"),
+    "utf8"
+  );
+  assert.match(mcpAdapter, /export class McpCapabilityAdapter/u);
+  assert.match(mcpAdapter, /export async function resolvePrivateCapabilityServers/u);
+  assert.match(
+    readFileSync(path.join(projectRoot, "runtime/src/public-web-search-adapter.mjs"), "utf8"),
+    /public\.web\.search/u
+  );
 });
 
 test("公共许可证与依赖台账覆盖外部执行组件", () => {

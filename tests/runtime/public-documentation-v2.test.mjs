@@ -18,6 +18,15 @@ const REQUIRED_DOCUMENTS = Object.freeze([
   "docs/reference/feishu-permissions.md",
   "docs/security/privacy.md"
 ]);
+const CAPABILITY_DOCUMENTS = Object.freeze([
+  "docs/adr/0007-capability-gateway-and-declarative-packs.md",
+  "docs/features/business-capabilities.en.md",
+  "docs/features/business-capabilities.md"
+]);
+const PUBLISHED_DOCUMENTS = Object.freeze([
+  ...REQUIRED_DOCUMENTS,
+  ...CAPABILITY_DOCUMENTS
+]);
 
 function read(relativePath) {
   return readFileSync(path.join(projectRoot, relativePath), "utf8");
@@ -38,7 +47,7 @@ test("公开上手、配置、运行和隐私文档纳入源码、公共快照�
   const packaged = new Set(packageManifest.files);
   const publicFiles = new Set(publicSnapshot.files.map((entry) => entry.path));
 
-  for (const relativePath of REQUIRED_DOCUMENTS) {
+  for (const relativePath of PUBLISHED_DOCUMENTS) {
     const metadata = lstatSync(path.join(projectRoot, relativePath));
     assert.equal(metadata.isFile(), true, relativePath);
     assert.equal(metadata.isSymbolicLink(), false, relativePath);
@@ -51,8 +60,7 @@ test("公开上手、配置、运行和隐私文档纳入源码、公共快照�
 
 test("根 README 保持中英文双语且关键安装边界一致", () => {
   const packageManifest = JSON.parse(read("package.json"));
-  const stableTag = `v${packageManifest.version}`;
-  const npxCommand = `npx --yes github:wildbyteai/feishu-digital-twin#${stableTag}`;
+  const npxCommand = "npx --yes github:wildbyteai/feishu-digital-twin";
   const publicSnapshot = JSON.parse(read("release/public-snapshot.example.json"));
   const packaged = new Set(packageManifest.files);
   const publicFiles = new Set(publicSnapshot.files.map((entry) => entry.path));
@@ -121,15 +129,17 @@ test("根 README 保持中英文双语且关键安装边界一致", () => {
   for (const content of [chinese, english]) {
     assert.equal(content.includes(`${npxCommand} --help`), true);
     assert.equal(content.includes(`${npxCommand} setup --help`), true);
+    assert.match(content, /#<target-tag>.*control upgrade/u);
+    assert.match(content, /#<target-tag>.*control rollback/u);
     assert.doesNotMatch(content, /github\.com\/wildbyteai\/feishu-digital-twin\/releases/u);
     assert.doesNotMatch(content, /git clone/u);
     assert.doesNotMatch(content, /npm install --global \./u);
     assert.doesNotMatch(content, /node bin\/feishu-digital-twin\.mjs/u);
   }
-  assert.match(chinese, /把下面这句话发给 Agent.*最新稳定 Git 标签.*setup.*doctor.*status/su);
-  assert.match(english, /Send the following sentence to an Agent.*latest stable Git tag.*setup.*doctor.*status/su);
-  assert.match(chinese, /稳定版本以不可变 Git 标签为准.*不依赖 GitHub Release/su);
-  assert.match(english, /Stable versions are identified by immutable Git tags.*does not require a GitHub Release/su);
+  assert.match(chinese, /把下面这句话发给 Agent.*受保护.*main.*setup.*doctor.*status/su);
+  assert.match(english, /Send the following sentence to an Agent.*protected.*main.*setup.*doctor.*status/su);
+  assert.match(chinese, /普通安装和管理命令.*受保护.*main.*稳定升级和回退.*不可变 Git 标签.*不依赖 GitHub Release/su);
+  assert.match(english, /Normal installation and management commands.*protected.*main.*stable upgrades and rollbacks.*immutable Git tags.*Neither requires a GitHub Release/su);
 });
 
 test("运行文档只使用 Git 标签和 npx，不依赖 Release 或 npm 包", () => {
@@ -141,7 +151,17 @@ test("运行文档只使用 Git 标签和 npx，不依赖 Release 或 npm 包", 
   assert.doesNotMatch(content, /^feishu-digital-twin\s/gmu);
 });
 
-test("公开分发策略固定为主干、不可变标签和 npx", () => {
+test("公开用户文档不硬编码本项目具体 v0.x Git 标签", () => {
+  for (const relativePath of [...ROOT_READMES, ...PUBLISHED_DOCUMENTS]) {
+    assert.doesNotMatch(
+      read(relativePath),
+      /github:wildbyteai\/feishu-digital-twin#v0\.\d+\.\d+/u,
+      relativePath
+    );
+  }
+});
+
+test("公开分发策略固定为受保护主干和无标签 npx", () => {
   const content = [
     read("docs/adr/0005-full-feature-public-product.md"),
     read("docs/operations/public-snapshot.md"),
@@ -150,10 +170,12 @@ test("公开分发策略固定为主干、不可变标签和 npx", () => {
     read("docs/public/product-spec.md")
   ].join("\n");
 
-  assert.match(content, /稳定用户交付只有公共源码仓与不可变 Git 标签/u);
+  assert.match(content, /普通安装.*受保护.*公共主干.*无标签.*npx/su);
+  assert.match(content, /不可变 Git 标签.*精确/su);
   assert.match(content, /不创建 GitHub Release，不发布 Codex Marketplace 或 npm registry/u);
   assert.match(content, /当前阶段冻结新增功能/u);
-  assert.match(content, /npx --yes "github:wildbyteai\/feishu-digital-twin#<stable-tag>"/u);
+  assert.match(content, /npx --yes github:wildbyteai\/feishu-digital-twin setup/u);
+  assert.doesNotMatch(content, /#<stable-tag>/u);
   assert.doesNotMatch(content, /提供公开源码、Codex Marketplace 安装入口/u);
   assert.doesNotMatch(content, /同一版本生成三种完整候选/u);
   assert.doesNotMatch(content, /公开发布时仍必须|公共发布签名/u);
@@ -194,7 +216,7 @@ test("根 README 只用三个主步骤引导真实安装并链接全部详细指
 test("公开文档中的本地 Markdown 链接均留在发行树内并可读取", () => {
   const packageManifest = JSON.parse(read("package.json"));
   const packaged = new Set(packageManifest.files);
-  for (const sourcePath of [...ROOT_READMES, ...REQUIRED_DOCUMENTS]) {
+  for (const sourcePath of [...ROOT_READMES, ...PUBLISHED_DOCUMENTS]) {
     const sourceDirectory = path.dirname(sourcePath);
     for (const target of markdownLinks(read(sourcePath))) {
       const pathname = decodeURIComponent(target.split("#", 1)[0]);
@@ -228,6 +250,46 @@ test("配置参考逐项说明来源、敏感性、验证和安全回退", () =>
   }
 });
 
+test("中英文公共能力文档说明完整契约、授权收紧、撤销和人工兜底", () => {
+  const chinese = read("docs/features/business-capabilities.md");
+  const english = read("docs/features/business-capabilities.en.md");
+  const adr = read("docs/adr/0007-capability-gateway-and-declarative-packs.md");
+  const compatibility = read("docs/compatibility.md");
+
+  assert.match(adr, /status:\s*accepted/u);
+  assert.match(adr, /CapabilityGateway/u);
+  assert.match(adr, /业务决策 Codex.*离线/su);
+  assert.match(adr, /声明式私有能力包/u);
+  assert.match(adr, /public.*internal|公开.*内部/iu);
+
+  for (const content of [chinese, english]) {
+    assert.match(content, /CapabilityGateway/u);
+    assert.match(content, /Web Search Adapter/u);
+    assert.match(content, /MCP Adapter/u);
+    assert.match(content, /resolveCapabilityServer/u);
+    assert.match(content, /unavailable/u);
+    assert.match(content, /FakeCapabilityAdapter/u);
+    assert.match(content, /capability-pack\.schema\.json/u);
+    assert.match(content, /--capability-pack/u);
+    assert.match(content, /--approve-capability-trust-zone internal/u);
+    assert.match(content, /private_capability_packs/u);
+    assert.match(content, /allowed_capabilities/u);
+    assert.match(content, /required_capabilities/u);
+    assert.match(content, /public_web_search_approved/u);
+    assert.match(content, /doctor/u);
+    assert.match(content, /config update --config/u);
+    assert.match(content, /human-fallback/u);
+    assert.match(content, /example\.records/u);
+    assert.doesNotMatch(content, /file:\/\/|\/(?:Users|home)\/|localhost/iu);
+  }
+
+  assert.match(compatibility, /private_capability_packs/u);
+  assert.match(compatibility, /allowed_capabilities/u);
+  assert.match(compatibility, /required_capabilities/u);
+  assert.match(compatibility, /capability pack.*schema_version.*1/iu);
+  assert.match(compatibility, /旧配置.*空能力集合|older configurations.*empty capability set/iu);
+});
+
 test("公开接入文档固定官方组件、Codex 黑盒和数据防泄漏边界", () => {
   const combined = REQUIRED_DOCUMENTS.map(read).join("\n");
   assert.match(combined, /npx @larksuite\/cli@latest install/u);
@@ -251,7 +313,7 @@ test("公开运行指引给出可直接执行的运行中升级与回退参数",
     );
     assert.match(
       content,
-      /npx --yes github:wildbyteai\/feishu-digital-twin#v0\.1\.12 control rollback --restart/u
+      /npx --yes "github:wildbyteai\/feishu-digital-twin#<target-tag>" control rollback --restart/u
     );
   }
   assert.match(runtime, /同一版本号.*status=unchanged.*不会覆盖/u);
@@ -292,7 +354,7 @@ test("setup 首装指引明确区分日常总开关、部署确认和 Base 建�
   for (const content of [chinese, english]) {
     assert.match(
       content,
-      /npx --yes github:wildbyteai\/feishu-digital-twin#v0\.1\.12 setup --help/u
+      /npx --yes github:wildbyteai\/feishu-digital-twin setup --help/u
     );
     assert.match(content, /数字分身启用/u);
     assert.match(content, /safe-but-disabled/u);

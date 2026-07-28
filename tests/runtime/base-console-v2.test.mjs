@@ -160,6 +160,97 @@ test("飞书 Base 规则保持自然语言，允许域只能收紧本机权限�
   assert.equal(config.authority_rules.length, 2);
 });
 
+test("Base 允许能力只能继承或收紧本机能力上限且群规则不能新增能力", async () => {
+  const local = {
+    profile: "example_profile",
+    control: { mode: "base" },
+    allowed_lark_domains: ["im", "base"],
+    allowed_capabilities: ["public.web.search", "example.records.read"],
+    console: {
+      base_token: "base_x",
+      runtime_table: "运行配置",
+      group_rules_table: "群级规则"
+    }
+  };
+  const load = (allowedCapabilities) => loadBaseConsole(local, {
+    runner: async (argv) => {
+      const table = argv[argv.indexOf("--table-id") + 1];
+      return {
+        exit_code: 0,
+        stdout: JSON.stringify(table === "运行配置" ? {
+          ok: true,
+          data: {
+            fields: ["数字分身启用", "允许域", "允许能力", "个性化规则"],
+            data: [[true, "继承", allowedCapabilities, ""]]
+          }
+        } : {
+          ok: true,
+          data: {
+            fields: ["启用", "群ID", "个性化规则"],
+            data: [[true, "oc_fixture", "请使用 example.unknown.read"]]
+          }
+        }),
+        stderr: ""
+      };
+    }
+  });
+
+  assert.deepEqual((await load("继承")).allowed_capabilities, [
+    "public.web.search",
+    "example.records.read"
+  ]);
+  const narrowed = await load(["example.records.read"]);
+  assert.deepEqual(narrowed.allowed_capabilities, ["example.records.read"]);
+  assert.deepEqual(narrowed.group_rules, [{
+    chat_id: "oc_fixture",
+    rules: ["请使用 example.unknown.read"]
+  }]);
+
+  for (const invalid of [
+    [],
+    "",
+    ["继承", "example.records.read"],
+    ["example.records.read", "example.records.read"],
+    ["example.unknown.read"]
+  ]) {
+    await assert.rejects(() => load(invalid), /Base console 允许能力/u);
+  }
+});
+
+test("旧 Base 缺少可选允许能力字段时保持本机能力上限", async () => {
+  const config = await loadBaseConsole({
+    profile: "example_profile",
+    control: { mode: "base" },
+    allowed_lark_domains: ["im", "base"],
+    allowed_capabilities: ["public.web.search"],
+    console: {
+      base_token: "base_x",
+      runtime_table: "运行配置",
+      group_rules_table: "群级规则"
+    }
+  }, {
+    runner: async (argv) => {
+      const table = argv[argv.indexOf("--table-id") + 1];
+      return {
+        exit_code: 0,
+        stdout: JSON.stringify(table === "运行配置" ? {
+          ok: true,
+          data: {
+            fields: ["数字分身启用", "允许域", "个性化规则"],
+            data: [[true, "继承", ""]]
+          }
+        } : {
+          ok: true,
+          data: { fields: ["启用", "群ID", "个性化规则"], data: [] }
+        }),
+        stderr: ""
+      };
+    }
+  });
+
+  assert.deepEqual(config.allowed_capabilities, ["public.web.search"]);
+});
+
 test("允许域只有明确写入“继承”时才继承本机权限上限", async () => {
   const config = await loadBaseConsole({
     profile: "example_profile",

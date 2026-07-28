@@ -32,6 +32,7 @@
 | 双身份回复 | 发给 Bot 的消息由 Bot 回复，发给主体用户的消息由主体用户身份回复；模型不能自行切换身份 |
 | AI 决策与执行 | 由 Codex、Skills 和自然语言规则完成触发判断、回复、追问、确认与动作编排 |
 | 飞书工作执行 | 通过官方 `lark-cli` 处理消息、任务、日历、文档、Base、Drive、Wiki 等能力 |
+| 按需业务读取 | 通过公开 Web Search 或部署者明确安装的声明式私有能力包读取有界证据；业务决策 Codex 保持离线 |
 | Base 控制台 | 完整安装的强制配置；可复用已有 Base，或由 `setup` 创建两张表来管理总开关、自然语言规则、群级规则和知识空间路由 |
 | 企业知识辅助 | 判断聊天方向后，从配置的企业知识空间检索相关内容辅助回复 |
 | 每日工作记忆 | 按计划汇总当天聊天、任务、日程和执行结果，写入指定的飞书 Drive 文件夹 |
@@ -53,18 +54,18 @@
 
 ### 安装命令行
 
-稳定版本以不可变 Git 标签为准，不依赖 GitHub Release 页面。最简单的方式是把下面这句话发给 Agent：
+普通安装和管理命令默认使用受保护的 `main`，稳定升级和回退才使用不可变 Git 标签；两者都不依赖 GitHub Release 页面。最简单的方式是把下面这句话发给 Agent：
 
-> 请从 `wildbyteai/feishu-digital-twin` 的最新稳定 Git 标签安装，阅读仓库 README 后完成 `setup`、`doctor` 和 `status`；遇到飞书授权、生产数据确认或创建资源时先向我确认。
+> 请从 `wildbyteai/feishu-digital-twin` 的受保护 `main` 安装，阅读仓库 README 后完成 `setup`、`doctor` 和 `status`；遇到飞书授权、生产数据确认或创建资源时先向我确认。
 
-也可以不做全局安装，直接用 `npx` 运行固定的稳定版本：
+也可以不做全局安装，直接用 `npx` 运行受保护主干：
 
 ```bash
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 --help
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup --help
+npx --yes github:wildbyteai/feishu-digital-twin --help
+npx --yes github:wildbyteai/feishu-digital-twin setup --help
 ```
 
-完整配置和后台服务由 `setup` 安装到本机私有版本目录。后续管理仍可交给 Agent，或继续用同一稳定标签运行相应命令。
+完整配置和后台服务由 `setup` 安装到本机私有版本目录。后续管理仍可交给 Agent，或继续使用同一无标签命令。
 
 ## setup 会自动做什么
 
@@ -88,7 +89,7 @@ npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup --help
 先运行下面的命令即可直接看到 Base 首装模板、初始值和验收步骤：
 
 ```bash
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup --help
+npx --yes github:wildbyteai/feishu-digital-twin setup --help
 ```
 
 需要区分一个日常开关和三个部署确认：
@@ -100,7 +101,7 @@ npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup --help
 | `--approve-message-scope` | 确认首次使用或扩大 `internal_visible` / `all_visible` | 只有扩大消息可见范围时使用 |
 | `--create-missing-resources` | 明确批准创建缺失的 Base、控制表、Wiki 空间或 Drive 日报目录 | 没有现成控制 Base 时，普通完整安装必须使用 |
 
-使用 Base 控制台时，运行配置表只保留一条记录。推荐初始值为：可选的 `名称=默认配置`、`数字分身启用=未勾选`、`允许域=继承`、`个性化规则=空或自然语言规则`；群级规则中的 `群名称` 也只是可选展示字段。旧字段 `生产执行` 仅用于兼容已有部署，新安装统一使用 `数字分身启用`。setup 成功但总开关仍关闭时，`readiness=safe-but-disabled` 是正常状态；确认身份、权限和后台服务均正常后，勾选 `数字分身启用`，最长等待约 10 秒，再通过同一稳定标签运行 `status`，应看到 `readiness=ready`。
+使用 Base 控制台时，运行配置表只保留一条记录。推荐初始值为：可选的 `名称=默认配置`、`数字分身启用=未勾选`、`允许域=继承`、`个性化规则=空或自然语言规则`；群级规则中的 `群名称` 也只是可选展示字段。旧字段 `生产执行` 仅用于兼容已有部署，新安装统一使用 `数字分身启用`。setup 成功但总开关仍关闭时，`readiness=safe-but-disabled` 是正常状态；确认身份、权限和后台服务均正常后，勾选 `数字分身启用`，最长等待约 10 秒，再通过同一无标签命令运行 `status`，应看到 `readiness=ready`。
 
 ## 功能与所需权限
 
@@ -118,6 +119,8 @@ npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup --help
 | Base 控制台 | `console`（普通安装自动包含） | `base` | User | 复用已有 Base 时需要读取权限；自动初始化时还需要创建 Base、建表和写入初始记录的权限 |
 
 新实例默认使用 `message_scope=bot_only`，本机业务域至少包含 `im,base`，其中 `base` 只服务于强制控制台。不要默认申请 `all`，也不要申请与所选能力无关的组织管理或成员管理权限。
+
+Web Search 和私有 MCP 读取不通过 `--capabilities` 申请飞书 domain。它们分别由 `public_web_search_approved` 和 `private_capability_packs` / `allowed_capabilities` 控制，并经过独立信任域确认；安装、Doctor、收紧、撤销与人工兜底见[可插拔业务能力](./docs/features/business-capabilities.md)。
 
 官方 scope 名称可能随 `lark-cli` 和飞书开放平台演进。安装时用当前 CLI 获取准确清单：
 
@@ -140,7 +143,7 @@ Bot 缺少 scope 时在飞书开发者后台处理；User 缺少 scope 时只对
 只处理 Bot 官方可见的实时消息，不需要 Wiki 或日报文件夹；Base 控制台仍是强制配置。没有现成 Base 时让 setup 自动创建：
 
 ```bash
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
+npx --yes github:wildbyteai/feishu-digital-twin setup \
   --profile <lark-cli-profile> \
   --timezone Asia/Shanghai \
   --codex-environment-root <private-codex-environment> \
@@ -154,7 +157,7 @@ npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
 读取企业内部群聊和私聊时使用 `internal_visible`；确实需要包括外部群时才使用 `all_visible`：
 
 ```bash
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
+npx --yes github:wildbyteai/feishu-digital-twin setup \
   --profile <lark-cli-profile> \
   --timezone Asia/Shanghai \
   --codex-environment-root <private-codex-environment> \
@@ -172,7 +175,7 @@ npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
 最简单的完整能力路径是直接让 setup 用官方 CLI 创建全部缺失资源。自动发现的知识空间路由会写入新 Base 的“个性化规则”，最终不保留第二套本机规则源：
 
 ```bash
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
+npx --yes github:wildbyteai/feishu-digital-twin setup \
   --profile <lark-cli-profile> \
   --timezone Asia/Shanghai \
   --codex-environment-root <private-codex-environment> \
@@ -190,7 +193,7 @@ npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
 如果已经有符合[飞书 Base 控制台](./docs/feishu-console.md)结构的 Base，可以直接传入稳定引用。运行配置表必须包含且只包含一条有效运行记录；群级规则表可以没有记录，但两张表都必须具备文档列出的全部字段。“允许域”只能使用严格的“继承”或本机上限内的非空域列表。已有 Base 只读验真，不会被 setup 擅自改造；知识空间路由继续在 Base 规则中维护，日报目录可以传入已有资源：
 
 ```bash
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
+npx --yes github:wildbyteai/feishu-digital-twin setup \
   --profile <lark-cli-profile> \
   --timezone Asia/Shanghai \
   --codex-environment-root <private-codex-environment> \
@@ -210,8 +213,8 @@ npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
 ## 安装后验收
 
 ```bash
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 doctor
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 status
+npx --yes github:wildbyteai/feishu-digital-twin doctor
+npx --yes github:wildbyteai/feishu-digital-twin status
 ```
 
 正常启用时应同时满足：
@@ -227,12 +230,12 @@ npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 status
 `readiness=degraded` 表示安装未完成，不应开始自动处理。升级时直接运行目标稳定标签并添加 `--restart`；回退也必须添加 `--restart`。同版本号不会覆盖已经安装的文件。常用运维命令：
 
 ```bash
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 status
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 control freeze
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 control enable
+npx --yes github:wildbyteai/feishu-digital-twin status
+npx --yes github:wildbyteai/feishu-digital-twin control freeze
+npx --yes github:wildbyteai/feishu-digital-twin control enable
 npx --yes "github:wildbyteai/feishu-digital-twin#<target-tag>" control upgrade --restart
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 control rollback --restart
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 control uninstall
+npx --yes "github:wildbyteai/feishu-digital-twin#<target-tag>" control rollback --restart
+npx --yes github:wildbyteai/feishu-digital-twin control uninstall
 ```
 
 完整说明见[后台运行与维护](./docs/operations/runtime.md)。卸载默认保留本机私有数据。
@@ -243,6 +246,7 @@ npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 control uninstall
 - 不要复制其他人的 `lark-cli` profile、Keychain、Codex 登录态、资源 ID 或实例配置；
 - 项目默认无远程遥测，不上传调试包；运行日志不记录消息正文、完整模型输出或凭据，也不建设长期聊天历史；短期待确认最多暂存必要动作寻址 10 分钟，确认、拒绝或过期后清空；
 - `allowed_lark_domains` 是本机不可突破的能力上限；Base 控制台只能继续收紧，不能新增未授权能力；
+- `allowed_capabilities` 是 Web/MCP 语义能力的本机上限；Base 只能取交集，业务决策 Codex 不能直接访问 Web、MCP、本机文件或凭据；
 - 回复身份、`🤖` 标识、冻结、去重、补读游标和所有权转让禁令由可信运行时保证；
 - 已有 Base 始终只读验真；只有部署者显式添加 `--create-missing-resources` 时，setup 才通过官方 CLI 创建或补齐缺失的 Base、控制表、初始记录、Wiki 空间和 Drive 日报目录。
 
@@ -282,6 +286,7 @@ Codex CLI 内部使用哪种模型服务，由部署者自己的 Codex 配置决
 - [兼容性](./docs/compatibility.md)
 - [每日工作记忆](./docs/features/daily-memory.md)
 - [企业知识库辅助回复](./docs/features/enterprise-knowledge.md)
+- [可插拔业务能力](./docs/features/business-capabilities.md)
 - [飞书 Base 控制台](./docs/feishu-console.md)
 - [本地服务连续性](./docs/operations/local-service-continuity.md)
 - [公共快照与隐私门](./docs/operations/public-snapshot.md)

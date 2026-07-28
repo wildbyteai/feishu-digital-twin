@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { readFile } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
+import path from "node:path";
 import process from "node:process";
 
 const args = process.argv.slice(2);
@@ -15,8 +16,6 @@ for (const required of [
   "never",
   "exec",
   "--ephemeral",
-  "--sandbox",
-  "read-only",
   "--strict-config",
   "--ignore-rules",
   "--output-schema",
@@ -27,8 +26,48 @@ for (const required of [
     process.exit(2);
   }
 }
-if (args.includes("--ignore-user-config")) {
-  process.stderr.write("isolated provider config must not be ignored\n");
+const webSearchEnabled = args.includes("--search");
+if (webSearchEnabled !== args.includes("--ignore-user-config")) {
+  process.stderr.write("public Web Search alone must ignore user tool configuration\n");
+  process.exit(2);
+}
+if (webSearchEnabled) {
+  if (args.includes("--sandbox")) {
+    process.stderr.write("public Web Search must use the isolated permission profile\n");
+    process.exit(2);
+  }
+  const configOverrides = args.flatMap((argument, index) =>
+    argument === "-c" && typeof args[index + 1] === "string" ? [args[index + 1]] : []
+  );
+  if (!configOverrides.includes(
+    'default_permissions="feishu-digital-twin-public-search"'
+  )) {
+    process.stderr.write("missing public Web Search permission profile\n");
+    process.exit(2);
+  }
+  const filesystemPermissions = configOverrides.find((value) =>
+    value.startsWith("permissions.feishu-digital-twin-public-search.filesystem=")
+  );
+  for (const required of [
+    '":root" = "deny"',
+    '":minimal" = "read"',
+    '":workspace_roots" = { "." = "read" }',
+    '":tmpdir" = "deny"',
+    '":slash_tmp" = "deny"'
+  ]) {
+    if (!filesystemPermissions?.includes(required)) {
+      process.stderr.write(`missing public filesystem rule: ${required}\n`);
+      process.exit(2);
+    }
+  }
+  if (!configOverrides.includes(
+    "permissions.feishu-digital-twin-public-search.network.enabled=false"
+  )) {
+    process.stderr.write("model-generated commands must not receive network access\n");
+    process.exit(2);
+  }
+} else if (!args.includes("--sandbox") || !args.includes("read-only")) {
+  process.stderr.write("offline inference requires the read-only sandbox\n");
   process.exit(2);
 }
 const schema = JSON.parse(await readFile(args[args.indexOf("--output-schema") + 1], "utf8"));
@@ -45,6 +84,19 @@ if (hasUnsupportedUniqueItems(schema)) {
 let prompt = "";
 process.stdin.setEncoding("utf8");
 for await (const chunk of process.stdin) prompt += chunk;
+if (prompt.includes("隔离公开网页查询器") !== webSearchEnabled) {
+  process.stderr.write("public search prompt and runtime mode disagree\n");
+  process.exit(3);
+}
+if (webSearchEnabled) {
+  try {
+    await lstat(path.join(process.env.HOME, ".agents"));
+    process.stderr.write("public Web Search HOME must not contain Skills\n");
+    process.exit(3);
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+}
 const eventId = [...prompt.matchAll(/"event_id"\s*:\s*"([^"]+)"/gu)].at(-1)?.[1];
 const messageId = [...prompt.matchAll(/"message_id"\s*:\s*"([^"]+)"/gu)].at(-1)?.[1];
 if (!prompt.includes("feishu-digital-twin") || !eventId || !messageId) {
@@ -53,13 +105,25 @@ if (!prompt.includes("feishu-digital-twin") || !eventId || !messageId) {
 }
 
 const doctor = eventId === "evt_provider_doctor";
+if (webSearchEnabled) {
+  process.stdout.write(`${JSON.stringify({
+    type: "item.completed",
+    item: { type: "web_search", query: "OpenAI Codex CLI 最新稳定版本" }
+  })}\n`);
+}
 const decision = {
   event_id: eventId,
   outcome: doctor ? "ignore" : "reply",
   reason: doctor ? "capability check complete" : "需要回应",
-  response: doctor ? null : { mode: "representative", text: "可以继续推进。" },
+  response: doctor ? null : {
+    mode: webSearchEnabled ? "suggestion" : "representative",
+    text: webSearchEnabled ? "Codex CLI 最新稳定版本为合成版本。" : "可以继续推进。"
+  },
   commands: [],
-  source_refs: [messageId]
+  ...(webSearchEnabled ? { lookup_requests: [] } : {}),
+  source_refs: webSearchEnabled
+    ? ["https://developers.example.invalid/codex"]
+    : [messageId]
 };
 process.stdout.write(`${JSON.stringify({
   type: "item.completed",

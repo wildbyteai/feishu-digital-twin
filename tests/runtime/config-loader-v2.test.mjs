@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   chmodSync,
+  mkdirSync,
   mkdtempSync,
   rmSync,
   symlinkSync,
@@ -15,6 +16,9 @@ import test from "node:test";
 import {
   INSTANCE_CONFIG_FIELDS,
   loadInstanceConfig,
+  loadPrivateCapabilityRegistry,
+  loadPrivateCapabilityPacks,
+  validateInstalledCapabilityPolicy,
   validateInstanceConfig
 } from "../../runtime/src/config-loader.mjs";
 import { LARK_CAPABILITY_CATALOG } from "../../shared/lark-capability-catalog.mjs";
@@ -82,6 +86,93 @@ test("实例配置拒绝 Secret、模型 Provider 和旧隔离字段", () => {
     config({ codex_isolation_root: "/fixture/legacy-runtime" })
   ]) {
     assert.throws(() => validateInstanceConfig(unsafe), /not allowed|unknown/u);
+  }
+});
+
+test("公开 Web Search 必须单独显式授权，旧配置缺省时保持关闭", () => {
+  const legacy = config();
+  assert.equal(Object.hasOwn(validateInstanceConfig(legacy), "public_web_search_approved"), false);
+  assert.equal(
+    validateInstanceConfig(config({ public_web_search_approved: false })).public_web_search_approved,
+    false
+  );
+  assert.equal(
+    validateInstanceConfig(config({ public_web_search_approved: true })).public_web_search_approved,
+    true
+  );
+  assert.throws(
+    () => validateInstanceConfig(config({ public_web_search_approved: "yes" })),
+    /public_web_search_approved must be a boolean/u
+  );
+});
+
+test("本机配置声明私有能力包、最大能力与 required 子集且旧配置保持兼容", async () => {
+  const legacy = config();
+  const validatedLegacy = validateInstanceConfig(legacy);
+  assert.equal(Object.hasOwn(validatedLegacy, "private_capability_packs"), false);
+  assert.equal(Object.hasOwn(validatedLegacy, "allowed_capabilities"), false);
+  assert.equal(Object.hasOwn(validatedLegacy, "required_capabilities"), false);
+
+  const source = config({
+    private_capability_packs: ["example.records", "example.archive"],
+    allowed_capabilities: ["example.records.read", "public.web.search"],
+    required_capabilities: ["example.records.read"]
+  });
+  assert.deepEqual(validateInstanceConfig(source), source);
+
+  for (const invalid of [
+    config({ private_capability_packs: ["example.records"] }),
+    config({ private_capability_packs: ["example.records", "example.records"] }),
+    config({ private_capability_packs: ["../example.records"] }),
+    config({ allowed_capabilities: ["example.records.read", "example.records.read"] }),
+    config({ required_capabilities: ["example.records.read"] }),
+    config({ required_capabilities: ["example.records.read", "example.records.read"] }),
+    config({
+      allowed_capabilities: ["example.archive.read"],
+      required_capabilities: ["example.records.read"]
+    })
+  ]) {
+    assert.throws(() => validateInstanceConfig(invalid), /config\.(private_capability_packs|allowed_capabilities|required_capabilities)/u);
+  }
+
+  const schema = JSON.parse(await readFile(instanceConfigSchema, "utf8"));
+  assert.equal(schema.properties.private_capability_packs.uniqueItems, true);
+  assert.equal(schema.properties.allowed_capabilities.uniqueItems, true);
+  assert.equal(schema.properties.required_capabilities.uniqueItems, true);
+  assert.deepEqual(schema.dependentRequired.required_capabilities, [
+    "allowed_capabilities"
+  ]);
+  assert.equal(schema.allOf.some((condition) => (
+    condition.if?.properties?.private_capability_packs?.minItems === 1 &&
+    condition.then?.required?.includes("allowed_capabilities")
+  )), true);
+});
+
+test("实际安装能力决定缺省本机上限且显式上限不能引用未安装能力", async () => {
+  const installed = [{ capability: "public.web.search", readiness: "ready" }];
+  assert.deepEqual(validateInstalledCapabilityPolicy(config(), installed), {
+    installed_capabilities: ["public.web.search"],
+    allowed_capabilities: ["public.web.search"],
+    required_capabilities: []
+  });
+  assert.throws(() => validateInstalledCapabilityPolicy(config({
+    allowed_capabilities: ["example.records.read"]
+  }), installed), /allowed capability is not installed/u);
+  assert.throws(() => validateInstalledCapabilityPolicy(config({
+    allowed_capabilities: ["public.web.search"],
+    required_capabilities: ["example.records.read"]
+  }), installed), /required capability is not allowed/u);
+
+  const directory = mkdtempSync(path.join(tmpdir(), "twin-empty-capability-registry-"));
+  const configPath = path.join(directory, "private/config.json");
+  mkdirSync(path.dirname(configPath), { recursive: true, mode: 0o700 });
+  try {
+    const registry = await loadPrivateCapabilityRegistry(configPath, config());
+    assert.deepEqual(registry.packs, []);
+    assert.deepEqual(registry.capabilities, []);
+    assert.deepEqual([...registry.adapters], []);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });
 
@@ -427,6 +518,125 @@ test("实例配置文件必须是绝对路径下仅当前用户可访问的普�
     chmodSync(configPath, 0o600);
     symlinkSync(configPath, linkedPath);
     await assert.rejects(() => loadInstanceConfig(linkedPath), /regular file/u);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("私有能力根只按配置 ID 加载当前用户拥有的私有普通文件", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "twin-private-capability-root-"));
+  const privateDirectory = path.join(directory, "private");
+  const capabilityRoot = path.join(privateDirectory, "capabilities");
+  const configPath = path.join(privateDirectory, "config.json");
+  const packPath = path.join(capabilityRoot, "example.records.json");
+  const pack = {
+    schema_version: 1,
+    pack_id: "example.records",
+    pack_version: "1.0.0",
+    server_ref: "example-managed-records",
+    tools: [{ name: "records.get", risk: "read" }],
+    capabilities: [{
+      capability: "example.records.read",
+      purpose: "读取合成记录",
+      operations: [{
+        operation: "get",
+        tool: "records.get",
+        input_constraints: {
+          allowed_fields: ["record_id"],
+          required_fields: ["record_id"],
+          max_bytes: 1024
+        }
+      }],
+      risk: "read",
+      trust_zone: "internal",
+      input_description: "合成记录标识",
+      failure_policy: "human-fallback"
+    }]
+  };
+  const configured = config({
+    private_capability_packs: ["example.records"],
+    allowed_capabilities: ["example.records.read"]
+  });
+  try {
+    mkdirSync(capabilityRoot, { recursive: true, mode: 0o700 });
+    writeFileSync(configPath, JSON.stringify(configured), { mode: 0o600 });
+    writeFileSync(packPath, JSON.stringify(pack), { mode: 0o600 });
+    writeFileSync(path.join(capabilityRoot, "unrelated.json"), "not-json\n", { mode: 0o600 });
+
+    assert.deepEqual(await loadPrivateCapabilityPacks(configPath, configured), [pack]);
+
+    chmodSync(packPath, 0o644);
+    await assert.rejects(
+      () => loadPrivateCapabilityPacks(configPath, configured),
+      /private capability pack must not be accessible/u
+    );
+    chmodSync(packPath, 0o600);
+
+    const linkedPath = path.join(capabilityRoot, "example.records.json");
+    rmSync(linkedPath);
+    const external = path.join(directory, "external.json");
+    writeFileSync(external, JSON.stringify(pack), { mode: 0o600 });
+    symlinkSync(external, linkedPath);
+    await assert.rejects(
+      () => loadPrivateCapabilityPacks(configPath, configured),
+      /private capability pack must be a regular file/u
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("私有能力根拒绝宽权限目录和包 ID 不一致", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "twin-private-capability-policy-"));
+  const privateDirectory = path.join(directory, "private");
+  const capabilityRoot = path.join(privateDirectory, "capabilities");
+  const configPath = path.join(privateDirectory, "config.json");
+  const configured = config({
+    private_capability_packs: ["example.records"],
+    allowed_capabilities: ["example.records.read"]
+  });
+  const pack = {
+    schema_version: 1,
+    pack_id: "example.other",
+    pack_version: "1.0.0",
+    server_ref: "example-managed-records",
+    tools: [{ name: "records.get", risk: "read" }],
+    capabilities: [{
+      capability: "example.records.read",
+      purpose: "读取合成记录",
+      operations: [{
+        operation: "get",
+        tool: "records.get",
+        input_constraints: {
+          allowed_fields: ["record_id"],
+          required_fields: ["record_id"],
+          max_bytes: 1024
+        }
+      }],
+      risk: "read",
+      trust_zone: "internal",
+      input_description: "合成记录标识",
+      failure_policy: "human-fallback"
+    }]
+  };
+  try {
+    mkdirSync(capabilityRoot, { recursive: true, mode: 0o700 });
+    writeFileSync(configPath, JSON.stringify(configured), { mode: 0o600 });
+    writeFileSync(
+      path.join(capabilityRoot, "example.records.json"),
+      JSON.stringify(pack),
+      { mode: 0o600 }
+    );
+
+    await assert.rejects(
+      () => loadPrivateCapabilityPacks(configPath, configured),
+      /pack identifier does not match/u
+    );
+    chmodSync(capabilityRoot, 0o755);
+    await assert.rejects(
+      () => loadPrivateCapabilityPacks(configPath, configured),
+      /private capability root must not be accessible/u
+    );
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

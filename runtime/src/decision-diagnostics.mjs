@@ -8,6 +8,7 @@ export const DECISION_REASON_CODES = Object.freeze({
   checkpointDeferred: "CHECKPOINT_DEFERRED",
   controlMessage: "CONTROL_MESSAGE",
   confirmationResult: "CONFIRMATION_RESULT",
+  contextUnreadable: "CONTEXT_UNREADABLE",
   aiIgnoreAfterContext: "AI_IGNORE_AFTER_CONTEXT",
   aiIgnoreWithoutContext: "AI_IGNORE_WITHOUT_CONTEXT",
   aiReplyAfterContext: "AI_REPLY_AFTER_CONTEXT",

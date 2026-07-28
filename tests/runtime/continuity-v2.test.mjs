@@ -1384,3 +1384,45 @@ test("本机探针只从脱敏日志累计 ready/error、失败和重复结果",
   });
   assert.doesNotMatch(JSON.stringify(result), /private body|private-label/u);
 });
+
+test("每日记忆连续性探针只接受严格有效的目标日期", async () => {
+  const projectRoot = mkdtempSync(path.join(tmpdir(), "twin-daily-target-probe-"));
+  const runtimeRoot = path.join(projectRoot, ".runtime");
+  const resultLog = path.join(runtimeRoot, "daily-memory.stdout.log");
+  mkdirSync(runtimeRoot, { mode: 0o700 });
+  const adapters = createLocalContinuityAdapters({ launchd_domain: "gui/current" }, {
+    projectRoot,
+    commandRunner: () => ({
+      status: 0,
+      stdout: "state = exited\nruns = 1\nlast exit code = 0\n",
+      stderr: ""
+    })
+  });
+  const service = {
+    role: "daily_memory",
+    label: "private-daily-label",
+    result_log: ".runtime/daily-memory.stdout.log"
+  };
+
+  writeFileSync(resultLog, `${JSON.stringify({
+    logged_at: "2026-07-28T00:10:00.000Z",
+    outcome: "reply",
+    executions: [],
+    confirmations: [],
+    target_date: "2026-07-27"
+  })}\n`, { mode: 0o600 });
+  const valid = await adapters.probeService(service);
+  assert.equal(valid.last_result_parseable, true);
+  assert.equal(valid.last_result_has_target_date, true);
+
+  writeFileSync(resultLog, `${JSON.stringify({
+    logged_at: "2026-07-28T00:10:00.000Z",
+    outcome: "reply",
+    executions: [],
+    confirmations: [],
+    target_date: "2026-02-30"
+  })}\n`, { mode: 0o600 });
+  const invalid = await adapters.probeService(service);
+  assert.equal(invalid.last_result_parseable, true);
+  assert.equal(invalid.last_result_has_target_date, false);
+});

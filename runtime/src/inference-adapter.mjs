@@ -1,4 +1,5 @@
 import { runCodexDecision } from "./codex-runner.mjs";
+import { validateCapabilityLookupRequest } from "./capability-gateway.mjs";
 
 const SAFE_MESSAGES = Object.freeze({
   INFERENCE_FAILED: "Codex inference failed",
@@ -28,14 +29,16 @@ function nonEmptyText(value) {
 }
 
 function assertDecisionEnvelope(decision, event) {
-  if (!exactFields(decision, [
+  const fields = [
     "commands",
     "event_id",
     "outcome",
     "reason",
     "response",
     "source_refs"
-  ])) {
+  ];
+  if (Object.hasOwn(decision ?? {}, "lookup_requests")) fields.push("lookup_requests");
+  if (!exactFields(decision, fields)) {
     throw new InferenceError("INFERENCE_INVALID_OUTPUT");
   }
   if (decision.event_id !== event.event_id || !nonEmptyText(decision.event_id)) {
@@ -70,6 +73,17 @@ function assertDecisionEnvelope(decision, event) {
       !nonEmptyText(command.reason) ||
       !new Set(["auto", "human"]).has(command.confirmation)
     ) {
+      throw new InferenceError("INFERENCE_INVALID_OUTPUT");
+    }
+  }
+  const lookupRequests = decision.lookup_requests ?? [];
+  if (!Array.isArray(lookupRequests) || lookupRequests.length > 1) {
+    throw new InferenceError("INFERENCE_INVALID_OUTPUT");
+  }
+  for (const request of lookupRequests) {
+    try {
+      validateCapabilityLookupRequest(request);
+    } catch {
       throw new InferenceError("INFERENCE_INVALID_OUTPUT");
     }
   }

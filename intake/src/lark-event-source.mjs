@@ -43,6 +43,15 @@ export function officialEventToRawMessage(event, chatMetadata) {
   const metadata = chatMetadata && typeof chatMetadata === "object" ? chatMetadata : {};
   const external = [metadata.external, metadata.is_external]
     .find((value) => typeof value === "boolean") ?? null;
+  const optional = Object.fromEntries([
+    "reply_to_message_id",
+    "parent_id",
+    "parent_message_id",
+    "root_id",
+    "root_message_id",
+    "thread_id",
+    "mentions"
+  ].filter((field) => event[field] !== undefined).map((field) => [field, event[field]]));
 
   return {
     event_id: event.event_id,
@@ -51,9 +60,10 @@ export function officialEventToRawMessage(event, chatMetadata) {
     message_id: event.message_id,
     sender_id: event.sender_id,
     create_time: event.create_time,
-    update_time: event.create_time,
+    update_time: event.update_time ?? event.create_time,
     message_type: event.message_type,
     content: event.content,
+    ...optional,
     is_external: external,
     tenant_key: typeof metadata.tenant_key === "string" ? metadata.tenant_key : null
   };

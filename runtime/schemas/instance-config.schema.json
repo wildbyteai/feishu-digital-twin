@@ -15,6 +15,33 @@
     "allowed_lark_domains"
   ],
   "properties": {
+    "private_capability_packs": {
+      "description": "Explicit identifiers of private capability packs installed for this instance.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+      }
+    },
+    "allowed_capabilities": {
+      "description": "Optional local maximum semantic capability set. When omitted, all explicitly installed capabilities remain available for backward compatibility.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+      }
+    },
+    "required_capabilities": {
+      "description": "Semantic capabilities whose structural unavailability degrades overall readiness. Every value must also appear in allowed_capabilities; the runtime enforces this subset rule.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+      }
+    },
     "schema_version": {
       "enum": [1, 2]
     },
@@ -57,6 +84,10 @@
       "maximum": 3
     },
     "production_data_approved": {
+      "type": "boolean"
+    },
+    "public_web_search_approved": {
+      "description": "Explicit deployment approval for public Web Search. Missing or false keeps ordinary business inference offline.",
       "type": "boolean"
     },
     "production_enabled": {
@@ -321,7 +352,21 @@
       }
     }
   },
+  "dependentRequired": {
+    "required_capabilities": ["allowed_capabilities"]
+  },
   "allOf": [
+    {
+      "if": {
+        "required": ["private_capability_packs"],
+        "properties": {
+          "private_capability_packs": { "minItems": 1 }
+        }
+      },
+      "then": {
+        "required": ["allowed_capabilities"]
+      }
+    },
     {
       "if": {
         "required": ["schema_version"],

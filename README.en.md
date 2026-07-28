@@ -32,6 +32,7 @@ This is neither a conventional mention-only Bot nor a hosted SaaS. Every automat
 | Dual-identity replies | Messages sent to the Bot are answered by the Bot; messages sent to the principal user are answered with the principal user's identity. The model cannot switch identities by itself. |
 | AI decisions and execution | Codex, Skills, and natural-language rules decide when to engage, what to say, when to request confirmation, and which actions to run. |
 | Feishu work execution | Uses the official `lark-cli` for messages, tasks, calendars, documents, Base, Drive, Wiki, and related capabilities. |
+| On-demand business lookup | Retrieves bounded evidence through public Web Search or an explicitly installed declarative private capability pack while the business-decision Codex session remains offline. |
 | Base control console | Required for a complete installation. Reuse an existing Base or let `setup` create two tables for the master switch, natural-language rules, group-specific rules, and knowledge routing. |
 | Enterprise knowledge | Classifies the direction of a conversation and retrieves relevant content from configured enterprise knowledge spaces before replying. |
 | Daily work memory | Summarizes the day's chats, tasks, calendar events, and execution results into a designated Feishu Drive folder. |
@@ -53,18 +54,18 @@ This project is for individuals or teams that can self-host the runtime, adminis
 
 ### Install the CLI
 
-Stable versions are identified by immutable Git tags; installation does not require a GitHub Release page. Send the following sentence to an Agent:
+Normal installation and management commands use the protected `main` branch by default; stable upgrades and rollbacks use immutable Git tags. Neither requires a GitHub Release page. Send the following sentence to an Agent:
 
-> Install the latest stable Git tag from `wildbyteai/feishu-digital-twin`, follow the repository README through `setup`, `doctor`, and `status`, and ask me before Feishu authorization, production-data approval, or resource creation.
+> Install from the protected `main` branch of `wildbyteai/feishu-digital-twin`, follow the repository README through `setup`, `doctor`, and `status`, and ask me before Feishu authorization, production-data approval, or resource creation.
 
-Alternatively, run the fixed stable version directly with `npx` without a global installation:
+Alternatively, run the protected main branch directly with `npx` without a global installation:
 
 ```bash
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 --help
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup --help
+npx --yes github:wildbyteai/feishu-digital-twin --help
+npx --yes github:wildbyteai/feishu-digital-twin setup --help
 ```
 
-`setup` installs complete configuration and background services into a private local version directory. Continue managing the instance through an Agent or by running commands from the same stable tag.
+`setup` installs complete configuration and background services into a private local version directory. Continue managing the instance through an Agent or by using the same untagged commands.
 
 ## What `setup` automates
 
@@ -88,7 +89,7 @@ Automatic creation uses the principal user's identity and the deterministic name
 Run the following command to see the Base first-install template, initial values, and verification sequence directly in the CLI:
 
 ```bash
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup --help
+npx --yes github:wildbyteai/feishu-digital-twin setup --help
 ```
 
 There is one day-to-day switch and three deployment-time confirmations:
@@ -100,7 +101,7 @@ There is one day-to-day switch and three deployment-time confirmations:
 | `--approve-message-scope` | Approves an initial or broader `internal_visible` / `all_visible` scope | Only when expanding message visibility |
 | `--create-missing-resources` | Explicitly approves creation of a missing Base, control table, Wiki space, or Drive daily-memory folder | Required for a normal installation when no existing control Base is supplied |
 
-When the Base console is enabled, keep exactly one row in the runtime table. Recommended initial values are the optional display label `名称=默认配置`, `数字分身启用=unchecked`, `允许域=继承`, and an empty or natural-language `个性化规则`; `群名称` is also an optional display field. The old `生产执行` field remains only for compatibility with existing deployments; new installations should use `数字分身启用`. If setup succeeds while the master switch is off, `readiness=safe-but-disabled` is expected. After identities, permissions, and background services have been verified, check `数字分身启用`, wait up to about ten seconds, and run `status` from the same stable tag again; it should report `readiness=ready`.
+When the Base console is enabled, keep exactly one row in the runtime table. Recommended initial values are the optional display label `名称=默认配置`, `数字分身启用=unchecked`, `允许域=继承`, and an empty or natural-language `个性化规则`; `群名称` is also an optional display field. The old `生产执行` field remains only for compatibility with existing deployments; new installations should use `数字分身启用`. If setup succeeds while the master switch is off, `readiness=safe-but-disabled` is expected. After identities, permissions, and background services have been verified, check `数字分身启用`, wait up to about ten seconds, and run `status` with the same untagged command again; it should report `readiness=ready`.
 
 ## Features and required permissions
 
@@ -118,6 +119,8 @@ Feishu permissions have three layers: the application's **Bot scopes**, the prin
 | Base control console | `console` (automatically included for normal setup) | `base` | User | Read access when reusing a Base; Base creation, table creation, and initial-record write access when provisioning automatically |
 
 New instances default to `message_scope=bot_only` and at least the `im,base` local domains; `base` is reserved for the mandatory control console. Do not request `all` by default, and do not request organization-management or member-management permissions unrelated to the selected capabilities.
+
+Web Search and private MCP reads do not use `--capabilities` to request a Feishu domain. They are governed by `public_web_search_approved` and `private_capability_packs` / `allowed_capabilities`, with separate trust-zone approval. See [pluggable business capabilities](./docs/features/business-capabilities.en.md) for installation, Doctor, narrowing, revocation, and human fallback.
 
 Exact scope names can evolve with the Feishu Open Platform and `lark-cli`. Use the current CLI to obtain the authoritative list:
 
@@ -140,7 +143,7 @@ Handle missing Bot scopes in the Feishu developer console. Grant missing User sc
 Handle only messages officially visible to the Bot. Wiki and a daily-memory folder are not required, but the Base console remains mandatory. If no existing Base is available, let setup create it:
 
 ```bash
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
+npx --yes github:wildbyteai/feishu-digital-twin setup \
   --profile <lark-cli-profile> \
   --timezone Asia/Shanghai \
   --codex-environment-root <private-codex-environment> \
@@ -154,7 +157,7 @@ npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
 Use `internal_visible` for internal chats and direct messages. Use `all_visible` only when external groups must also be included:
 
 ```bash
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
+npx --yes github:wildbyteai/feishu-digital-twin setup \
   --profile <lark-cli-profile> \
   --timezone Asia/Shanghai \
   --codex-environment-root <private-codex-environment> \
@@ -172,7 +175,7 @@ npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
 For a simple full-capability installation, let setup create all missing resources through the official CLI. The discovered knowledge route is written into the new Base `个性化规则` field, so the final configuration has no second local rule source:
 
 ```bash
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
+npx --yes github:wildbyteai/feishu-digital-twin setup \
   --profile <lark-cli-profile> \
   --timezone Asia/Shanghai \
   --codex-environment-root <private-codex-environment> \
@@ -190,7 +193,7 @@ Without `--create-missing-resources`, setup performs no silent write. It returns
 If a Base already follows the [Base control console schema](./docs/feishu-console.md), pass its stable references directly. The runtime table must contain exactly one valid runtime record. The group-rules table may contain no records, but both tables must contain all documented fields. The allowed-domain field must be exactly “inherit” or a non-empty subset of the local ceiling. Existing Base resources are verified read-only and are never silently reshaped. Knowledge routing remains in the Base rules; an existing daily-memory folder can be supplied directly:
 
 ```bash
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
+npx --yes github:wildbyteai/feishu-digital-twin setup \
   --profile <lark-cli-profile> \
   --timezone Asia/Shanghai \
   --codex-environment-root <private-codex-environment> \
@@ -210,8 +213,8 @@ When there is no existing Base but an existing knowledge space should be reused,
 ## Post-installation verification
 
 ```bash
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 doctor
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 status
+npx --yes github:wildbyteai/feishu-digital-twin doctor
+npx --yes github:wildbyteai/feishu-digital-twin status
 ```
 
 A normally enabled installation should satisfy all of the following:
@@ -227,12 +230,12 @@ A normally enabled installation should satisfy all of the following:
 `readiness=degraded` means setup is incomplete and automatic handling should not begin. To upgrade, run the target stable tag with `--restart`; rollback also requires `--restart`. An installed version is never overwritten by another source with the same version number.
 
 ```bash
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 status
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 control freeze
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 control enable
+npx --yes github:wildbyteai/feishu-digital-twin status
+npx --yes github:wildbyteai/feishu-digital-twin control freeze
+npx --yes github:wildbyteai/feishu-digital-twin control enable
 npx --yes "github:wildbyteai/feishu-digital-twin#<target-tag>" control upgrade --restart
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 control rollback --restart
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 control uninstall
+npx --yes "github:wildbyteai/feishu-digital-twin#<target-tag>" control rollback --restart
+npx --yes github:wildbyteai/feishu-digital-twin control uninstall
 ```
 
 See [runtime operations](./docs/operations/runtime.md) for details. Uninstall keeps local private data by default.
@@ -243,6 +246,7 @@ See [runtime operations](./docs/operations/runtime.md) for details. Uninstall ke
 - Do not copy another person's `lark-cli` profile, Keychain, Codex login state, resource IDs, or instance configuration.
 - The project has no remote telemetry by default and does not upload diagnostic bundles. Runtime logs do not retain message bodies, full model output, or credentials, and the project does not build long-term chat history. Pending confirmation keeps only the minimum action addressing for up to ten minutes and clears it after approval, rejection, or expiry.
 - `allowed_lark_domains` is a local ceiling that cannot be exceeded. The Base console can only narrow it.
+- `allowed_capabilities` is the local ceiling for Web/MCP semantic capabilities. Base may only intersect it, and the business-decision Codex session cannot access Web, MCP, local files, or credentials directly.
 - Trusted runtime code enforces reply identity, the `🤖` disclosure mark, freezing, deduplication, supplemental-read cursors, and the ownership-transfer prohibition.
 - Existing Base resources are always verified read-only. Only an explicit `--create-missing-resources` allows the official CLI to create or complete a missing Base, control table, initial record, Wiki space, or Drive daily-memory folder.
 
@@ -282,6 +286,7 @@ The project does not rebuild a Feishu SDK, model SDK, action catalog, approval s
 - [Compatibility](./docs/compatibility.md)
 - [Daily work memory](./docs/features/daily-memory.md)
 - [Enterprise knowledge-assisted replies](./docs/features/enterprise-knowledge.md)
+- [Pluggable business capabilities](./docs/features/business-capabilities.en.md)
 - [Base control console](./docs/feishu-console.md)
 - [Local service continuity](./docs/operations/local-service-continuity.md)
 - [Public snapshot and privacy gate](./docs/operations/public-snapshot.md)

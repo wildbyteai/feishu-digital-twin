@@ -30,6 +30,10 @@ import {
 } from "./service-host.mjs";
 import {
   loadInstanceConfig,
+  loadPrivateCapabilityPack,
+  loadPrivateCapabilityPacks,
+  privateCapabilityRoot,
+  validateInstalledCapabilityPolicy,
   validateInstanceConfig
 } from "../../runtime/src/config-loader.mjs";
 import {
@@ -39,6 +43,8 @@ import {
   loadBaseRuntimeSwitch
 } from "../../runtime/src/base-console.mjs";
 import { CodexInferenceAdapter } from "../../runtime/src/inference-adapter.mjs";
+import { compilePrivateCapabilityPacks } from "../../runtime/src/private-capability-pack.mjs";
+import { PUBLIC_WEB_SEARCH_CAPABILITY } from "../../runtime/src/public-web-search-adapter.mjs";
 import { buildLarkEnvironment } from "../../shared/subprocess-environment.mjs";
 import {
   LARK_CAPABILITY_CATALOG,
@@ -62,6 +68,8 @@ const VALUE_OPTIONS = new Set([
   "--timezone",
   "--message-scope",
   "--capabilities",
+  "--capability-pack",
+  "--approve-capability-trust-zone",
   "--domains",
   "--console-base-token",
   "--console-runtime-table",
@@ -85,6 +93,7 @@ const FLAG_OPTIONS = new Set([
   "--create-missing-resources"
 ]);
 const PACKAGE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;
+const CAPABILITY_DOCTOR_TIMEOUT_MS = 1000;
 const MESSAGE_SCOPE_RANK = Object.freeze({
   bot_only: 0,
   internal_visible: 1,
@@ -102,6 +111,13 @@ const CONTROL_BASE_FIELD_DEFINITIONS = Object.freeze({
       name: "允许域",
       type: "select",
       multiple: true,
+      options: Object.freeze([Object.freeze({ name: "继承" })])
+    }),
+    Object.freeze({
+      name: "允许能力",
+      type: "select",
+      multiple: true,
+      required: false,
       options: Object.freeze([Object.freeze({ name: "继承" })])
     }),
     Object.freeze({ name: "个性化规则", type: "text" })
@@ -174,6 +190,8 @@ Global options:
   --timezone IANA_NAME              principal timezone for guided setup
   --message-scope SCOPE             guided setup scope; defaults to bot_only
   --capabilities LIST               comma-separated product capabilities mapped to Lark domains
+  --capability-pack PATH            private capability manifest; repeat to install more than one
+  --approve-capability-trust-zone Z approve newly enabled capabilities in trust zone Z
   --domains LIST                    comma-separated Lark domains; defaults to im
   --console-base-token TOKEN        existing control Base token
   --console-runtime-table NAME      existing runtime configuration table name or ID
@@ -195,6 +213,7 @@ Base control console first setup:
     名称=text("默认配置")             optional display label
     数字分身启用=checkbox(false)    the only day-to-day master switch
     允许域=multi-select("继承")     inherit the local capability ceiling
+    允许能力=multi-select("继承")   inherit or narrow the local semantic capability ceiling
     个性化规则=multiline text       required field; its value may be empty
   群级规则 (zero or more rows):
     群名称=text(optional), 群ID=text, 启用=checkbox, 个性化规则=multiline text
@@ -244,7 +263,12 @@ function parseArguments(argv) {
       if (!value || value.startsWith("--")) {
         throw new ProductError("MISSING_OPTION_VALUE", `${argument} requires a value`);
       }
-      options[argument.slice(2).replaceAll("-", "_")] = value;
+      const name = argument.slice(2).replaceAll("-", "_");
+      if (name === "capability_pack") {
+        options[name] = [...(options[name] ?? []), value];
+      } else {
+        options[name] = value;
+      }
       index += 1;
       continue;
     }
@@ -313,6 +337,244 @@ async function pathExists(filename) {
     if (error?.code === "ENOENT") return false;
     throw error;
   }
+}
+
+function capabilityDescriptors(config, privateCapabilities) {
+  return config.public_web_search_approved === true
+    ? [...privateCapabilities, PUBLIC_WEB_SEARCH_CAPABILITY]
+    : privateCapabilities;
+}
+
+function capabilityIdsFromPacks(packs) {
+  return packs.flatMap(({ capabilities }) => (
+    capabilities.map(({ capability }) => capability)
+  ));
+}
+
+function capabilityBindings(packs) {
+  return new Map(packs.flatMap((pack) => pack.capabilities.map((capability) => [
+    capability.capability,
+    JSON.stringify({
+      server_ref: pack.server_ref,
+      trust_zone: capability.trust_zone,
+      operations: capability.operations.map(({ operation, tool, input_constraints }) => ({
+        operation,
+        tool,
+        input_constraints
+      }))
+    })
+  ])));
+}
+
+async function loadCapabilityPackSources(options, packageRoot) {
+  const sources = options.capability_pack ?? [];
+  if (!Array.isArray(sources)) {
+    throw new ProductError("INVALID_CAPABILITY_PACK", "capability pack sources are invalid");
+  }
+  const packs = [];
+  for (const source of sources) {
+    const filename = path.resolve(source);
+    let packageLocation = path.resolve(packageRoot);
+    let sourceLocation = filename;
+    try {
+      [packageLocation, sourceLocation] = await Promise.all([
+        realpath(packageLocation),
+        realpath(filename)
+      ]);
+    } catch {
+      // The loader below returns the stable invalid-pack error for unreadable sources.
+    }
+    if (isInside(path.resolve(packageRoot), filename) || isInside(packageLocation, sourceLocation)) {
+      throw new ProductError(
+        "UNSAFE_CAPABILITY_PACK_LOCATION",
+        "private capability packs must be stored outside the product source tree"
+      );
+    }
+    try {
+      packs.push(await loadPrivateCapabilityPack(filename));
+    } catch {
+      throw new ProductError(
+        "INVALID_CAPABILITY_PACK",
+        "a private capability pack is invalid or not private"
+      );
+    }
+  }
+  try {
+    compilePrivateCapabilityPacks({ packs, servers: new Map() });
+  } catch {
+    throw new ProductError(
+      "INVALID_CAPABILITY_PACK",
+      "private capability packs contain conflicting declarations"
+    );
+  }
+  return packs;
+}
+
+function validateCapabilityTrustApproval(options) {
+  if (
+    options.approve_capability_trust_zone !== undefined &&
+    options.approve_capability_trust_zone !== "internal"
+  ) {
+    throw new ProductError(
+      "INVALID_CAPABILITY_TRUST_ZONE",
+      "the first stable private capability trust zone is internal"
+    );
+  }
+}
+
+async function prepareCapabilityCandidate({
+  candidate,
+  current,
+  configPath,
+  options,
+  packageRoot
+}) {
+  validateCapabilityTrustApproval(options);
+  const sourcePacks = await loadCapabilityPackSources(options, packageRoot);
+  let currentPacks = [];
+  try {
+    if ((current?.private_capability_packs ?? []).length > 0) {
+      currentPacks = await loadPrivateCapabilityPacks(configPath, current);
+    }
+  } catch {
+    throw new ProductError(
+      "INVALID_CAPABILITY_INSTALLATION",
+      "the installed private capability set is invalid"
+    );
+  }
+  const available = new Map(currentPacks.map((pack) => [pack.pack_id, pack]));
+  for (const pack of sourcePacks) available.set(pack.pack_id, pack);
+
+  const configured = structuredClone(candidate);
+  if (sourcePacks.length > 0 && options.config === undefined) {
+    configured.private_capability_packs = [...new Set([
+      ...(configured.private_capability_packs ?? []),
+      ...sourcePacks.map(({ pack_id: packId }) => packId)
+    ])];
+    configured.allowed_capabilities = [...new Set([
+      ...(configured.allowed_capabilities ?? (
+        configured.public_web_search_approved === true ? ["public.web.search"] : []
+      )),
+      ...capabilityIdsFromPacks(sourcePacks)
+    ])];
+  } else if (sourcePacks.length > 0 && configured.private_capability_packs === undefined) {
+    configured.private_capability_packs = sourcePacks.map(({ pack_id: packId }) => packId);
+  }
+  const targetPackIds = configured.private_capability_packs ?? [];
+  if (sourcePacks.some(({ pack_id: packId }) => !targetPackIds.includes(packId))) {
+    throw new ProductError(
+      "CAPABILITY_PACK_NOT_ENABLED",
+      "every supplied private capability pack must be enabled by the candidate configuration"
+    );
+  }
+  const missingPackIds = targetPackIds.filter((packId) => !available.has(packId));
+  if (missingPackIds.length > 0) {
+    throw new ProductError(
+      "CAPABILITY_PACK_SOURCE_REQUIRED",
+      "new private capability packs require an explicit --capability-pack source"
+    );
+  }
+  const targetPacks = targetPackIds.map((packId) => available.get(packId));
+  let compiled;
+  try {
+    compiled = compilePrivateCapabilityPacks({ packs: targetPacks, servers: new Map() });
+  } catch {
+    throw new ProductError(
+      "INVALID_CAPABILITY_PACK",
+      "private capability packs contain conflicting declarations"
+    );
+  }
+  if (targetPacks.length > 0 && configured.allowed_capabilities === undefined) {
+    configured.allowed_capabilities = [
+      ...capabilityIdsFromPacks(targetPacks),
+      ...(configured.public_web_search_approved === true ? ["public.web.search"] : [])
+    ];
+  }
+  let validated;
+  let policy;
+  try {
+    validated = validateInstanceConfig(configured);
+    policy = validateInstalledCapabilityPolicy(
+      validated,
+      capabilityDescriptors(validated, compiled.capabilities)
+    );
+  } catch {
+    throw new ProductError(
+      "INVALID_CAPABILITY_POLICY",
+      "the candidate capability policy is invalid"
+    );
+  }
+  const previousAllowed = new Set(current?.allowed_capabilities ?? []);
+  const previousBindings = capabilityBindings(currentPacks);
+  const targetBindings = capabilityBindings(targetPacks);
+  const internalCapabilities = new Set(targetPacks.flatMap(({ capabilities }) => (
+    capabilities
+      .filter(({ trust_zone: trustZone }) => trustZone === "internal")
+      .map(({ capability }) => capability)
+  )));
+  const newlyEnabled = policy.allowed_capabilities.filter((capability) => (
+    internalCapabilities.has(capability) && (
+      !previousAllowed.has(capability) ||
+      previousBindings.get(capability) !== targetBindings.get(capability)
+    )
+  ));
+  if (
+    newlyEnabled.length > 0 &&
+    options.approve_capability_trust_zone !== "internal"
+  ) {
+    throw new ProductError(
+      "CAPABILITY_TRUST_CONFIRMATION_REQUIRED",
+      "new internal capabilities require --approve-capability-trust-zone internal",
+      { capabilities: newlyEnabled, trust_zone: "internal" }
+    );
+  }
+  return { candidate: validated, sourcePacks };
+}
+
+async function installCapabilityPacks(configPath, packs) {
+  if (packs.length === 0) return async () => {};
+  const root = privateCapabilityRoot(configPath);
+  await ensurePrivateDirectory(root);
+  const previous = new Map();
+  for (const pack of packs) {
+    const filename = path.join(root, `${pack.pack_id}.json`);
+    if (await pathExists(filename)) {
+      try {
+        previous.set(pack.pack_id, await loadPrivateCapabilityPack(filename, {
+          expectedPackId: pack.pack_id
+        }));
+      } catch {
+        throw new ProductError(
+          "INVALID_CAPABILITY_INSTALLATION",
+          "an installed private capability pack is invalid"
+        );
+      }
+    }
+  }
+  const written = [];
+  try {
+    for (const pack of packs) {
+      await writePrivateJson(path.join(root, `${pack.pack_id}.json`), pack);
+      written.push(pack.pack_id);
+    }
+  } catch {
+    for (const packId of written.reverse()) {
+      const filename = path.join(root, `${packId}.json`);
+      if (previous.has(packId)) await writePrivateJson(filename, previous.get(packId));
+      else await rm(filename, { force: true });
+    }
+    throw new ProductError(
+      "CAPABILITY_INSTALL_FAILED",
+      "private capability packs could not be installed"
+    );
+  }
+  return async () => {
+    for (const pack of [...packs].reverse()) {
+      const filename = path.join(root, `${pack.pack_id}.json`);
+      if (previous.has(pack.pack_id)) await writePrivateJson(filename, previous.get(pack.pack_id));
+      else await rm(filename, { force: true });
+    }
+  };
 }
 
 function check(status, code, extra = {}) {
@@ -1439,7 +1701,9 @@ function requireControlBaseSchema(fields, expected, tableRole) {
   for (const definition of expected) {
     const field = byName.get(definition.name);
     if (!field) {
-      invalid.push({ field: definition.name, issue: "missing" });
+      if (definition.required !== false) {
+        invalid.push({ field: definition.name, issue: "missing" });
+      }
       continue;
     }
     if (field.type !== definition.type) {
@@ -2433,10 +2697,27 @@ async function configure(root, packageRoot, options, environment) {
     );
   }
   requireMessageScopeApproval(candidate, null, options);
-  const configured = await materializeConfiguredCandidate(candidate, options, environment);
+  const capabilityPlan = await prepareCapabilityCandidate({
+    candidate,
+    current: null,
+    configPath,
+    options,
+    packageRoot
+  });
+  const configured = await materializeConfiguredCandidate(
+    capabilityPlan.candidate,
+    options,
+    environment
+  );
+  let restoreCapabilities = async () => {};
   try {
+    restoreCapabilities = await installCapabilityPacks(
+      configPath,
+      capabilityPlan.sourcePacks
+    );
     await writePrivateJson(configPath, configured);
   } catch {
+    await restoreCapabilities().catch(() => {});
     await rm(configPath, { force: true }).catch(() => {});
     throw new ProductError(
       "CODEX_CONFIGURATION_FAILED",
@@ -2472,7 +2753,14 @@ function withRetainedResourceDetails(error, retainedResources) {
   );
 }
 
-async function setup(root, packageRoot, serviceOptions, options, environment) {
+async function setup(
+  root,
+  packageRoot,
+  serviceOptions,
+  options,
+  environment,
+  resolveCapabilityServer
+) {
   validateGuidedResourceOptions(options);
   if (options.capabilities !== undefined && options.domains !== undefined) {
     throw new ProductError(
@@ -2521,6 +2809,14 @@ async function setup(root, packageRoot, serviceOptions, options, environment) {
     throw withRetainedResourceDetails(error, retainedResources);
   }
   requireMessageScopeApproval(candidate, originalConfigState?.config ?? null, options);
+  const capabilityPlan = await prepareCapabilityCandidate({
+    candidate,
+    current: originalConfigState?.config ?? null,
+    configPath: originalConfigState?.configPath ?? path.join(root, "private/config.json"),
+    options,
+    packageRoot
+  });
+  candidate = capabilityPlan.candidate;
   let original = null;
   if (originalInstallation) {
     try {
@@ -2534,6 +2830,7 @@ async function setup(root, packageRoot, serviceOptions, options, environment) {
     }
   }
   let installation = originalInstallation;
+  let restoreCapabilities = async () => {};
   try {
     if (!installation) {
       await init(root, packageRoot, options);
@@ -2559,14 +2856,25 @@ async function setup(root, packageRoot, serviceOptions, options, environment) {
     const configured = await materializeConfiguredCandidate(candidate, options, environment, {
       current
     });
+    restoreCapabilities = await installCapabilityPacks(
+      configPath,
+      capabilityPlan.sourcePacks
+    );
     await writePrivateJson(configPath, configured);
     await requireDoctorReady(root, serviceOptions, options, environment, {
-      requirePrimaryBaseMasterSwitch
+      requirePrimaryBaseMasterSwitch,
+      resolveCapabilityServer
     });
     await installServices(root, { ...serviceOptions, start: true });
     await requireServicesReady(root, serviceOptions);
     await changeFreeze(root, false);
-    const final = await status(root, serviceOptions, options, environment);
+    const final = await status(
+      root,
+      serviceOptions,
+      options,
+      environment,
+      resolveCapabilityServer
+    );
     if (final.readiness === "degraded") {
       throw new ProductError(
         "SETUP_FINAL_STATUS_DEGRADED",
@@ -2615,6 +2923,7 @@ async function setup(root, packageRoot, serviceOptions, options, environment) {
       try {
         await changeFreeze(root, true);
         await uninstallServices(root, serviceOptions);
+        await restoreCapabilities();
         if (original.configPresent && original.config !== undefined) {
           await writePrivateJson(original.configPath, original.config);
         } else if (!original.configPresent) {
@@ -2692,6 +3001,15 @@ async function updateConfig(root, packageRoot, options, environment, serviceOpti
       "config update cannot change or approve the Codex environment"
     );
   }
+  if (
+    options.capability_pack !== undefined ||
+    options.approve_capability_trust_zone !== undefined
+  ) {
+    throw new ProductError(
+      "CAPABILITY_SETUP_REQUIRED",
+      "installing or expanding private capabilities requires setup"
+    );
+  }
   const configPath = resolveInside(root, installation.config_path, "config_path");
   const candidatePath = await candidateConfigPath(options, packageRoot);
   let current;
@@ -2720,6 +3038,49 @@ async function updateConfig(root, packageRoot, options, environment, serviceOpti
       "ordinary configuration updates cannot change production data approval"
     );
   }
+  const currentPackIds = new Set(current.private_capability_packs ?? []);
+  const candidatePackIds = candidate.private_capability_packs ?? [];
+  if (candidatePackIds.some((packId) => !currentPackIds.has(packId))) {
+    throw new ProductError(
+      "CAPABILITY_SETUP_REQUIRED",
+      "installing a new private capability pack requires setup"
+    );
+  }
+  try {
+    const currentPacks = await loadPrivateCapabilityPacks(configPath, current);
+    const candidatePacks = currentPacks.filter(({ pack_id: packId }) => (
+      candidatePackIds.includes(packId)
+    ));
+    const currentCompiled = compilePrivateCapabilityPacks({
+      packs: currentPacks,
+      servers: new Map()
+    });
+    const candidateCompiled = compilePrivateCapabilityPacks({
+      packs: candidatePacks,
+      servers: new Map()
+    });
+    const currentPolicy = validateInstalledCapabilityPolicy(
+      current,
+      capabilityDescriptors(current, currentCompiled.capabilities)
+    );
+    const candidatePolicy = validateInstalledCapabilityPolicy(
+      candidate,
+      capabilityDescriptors(candidate, candidateCompiled.capabilities)
+    );
+    const currentAllowed = new Set(currentPolicy.allowed_capabilities);
+    if (candidatePolicy.allowed_capabilities.some((capability) => !currentAllowed.has(capability))) {
+      throw new ProductError(
+        "CAPABILITY_SETUP_REQUIRED",
+        "expanding the local capability ceiling requires setup"
+      );
+    }
+  } catch (error) {
+    if (error instanceof ProductError) throw error;
+    throw new ProductError(
+      "INVALID_CAPABILITY_POLICY",
+      "the candidate capability policy is invalid"
+    );
+  }
   candidate.lark_cli_bin = await resolveExecutableFile(
     options.lark_cli ?? candidate.lark_cli_bin ?? current.lark_cli_bin ?? "lark-cli",
     environment
@@ -2745,6 +3106,130 @@ function summarizeDoctor(health) {
   };
 }
 
+function advertisedToolNames(result) {
+  const tools = Array.isArray(result)
+    ? result
+    : Array.isArray(result?.tools)
+      ? result.tools
+      : null;
+  if (tools === null) return null;
+  if (tools.some((tool) => (
+    !tool ||
+    typeof tool !== "object" ||
+    Array.isArray(tool) ||
+    typeof tool.name !== "string" ||
+    tool.name.length === 0
+  ))) return null;
+  return new Set(tools
+    .filter((tool) => (
+      tool.annotations?.readOnlyHint === true &&
+      tool.annotations?.destructiveHint !== true
+    ))
+    .map(({ name }) => name));
+}
+
+async function boundedCapabilityDoctorCall(callback) {
+  let timer;
+  try {
+    return await Promise.race([
+      Promise.resolve()
+        .then(callback)
+        .then((value) => ({ ok: true, value }), () => ({ ok: false })),
+      new Promise((resolve) => {
+        timer = setTimeout(
+          () => resolve({ ok: false }),
+          CAPABILITY_DOCTOR_TIMEOUT_MS
+        );
+      })
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+async function capabilitiesDoctor(configPath, config, resolveCapabilityServer) {
+  try {
+    const packs = await loadPrivateCapabilityPacks(configPath, config);
+    const compiled = compilePrivateCapabilityPacks({ packs, servers: new Map() });
+    const policy = validateInstalledCapabilityPolicy(
+      config,
+      capabilityDescriptors(config, compiled.capabilities)
+    );
+    const required = new Set(policy.required_capabilities);
+    const allowed = new Set(policy.allowed_capabilities);
+    const privateCapabilities = compiled.capabilities.filter(({ capability }) => (
+      allowed.has(capability)
+    ));
+    const publicWebSearchAllowed = config.public_web_search_approved === true &&
+      allowed.has(PUBLIC_WEB_SEARCH_CAPABILITY.capability);
+    if (privateCapabilities.length === 0 && !publicWebSearchAllowed) {
+      return check("pass", "NOT_CONFIGURED", { capabilities: [] });
+    }
+
+    const serverReadiness = new Map();
+    const allowedPacks = packs.filter(({ capabilities }) => (
+      capabilities.some(({ capability }) => allowed.has(capability))
+    ));
+    for (const pack of allowedPacks) {
+      if (serverReadiness.has(pack.server_ref)) continue;
+      const startedAt = Date.now();
+      const resolved = await boundedCapabilityDoctorCall(
+        () => resolveCapabilityServer(pack.server_ref)
+      );
+      const server = resolved.ok === true ? resolved.value : undefined;
+      let tools = null;
+      if (
+        typeof server?.callTool === "function" &&
+        typeof server?.listTools === "function"
+      ) {
+        const listed = await boundedCapabilityDoctorCall(() => server.listTools());
+        if (listed.ok === true) tools = advertisedToolNames(listed.value);
+      }
+      serverReadiness.set(pack.server_ref, {
+        latency_ms: Math.max(0, Date.now() - startedAt),
+        tools
+      });
+    }
+
+    const capabilities = privateCapabilities.map(({ capability }) => {
+      const pack = allowedPacks.find(({ capabilities: declarations }) => (
+        declarations.some((declaration) => declaration.capability === capability)
+      ));
+      const declaration = pack.capabilities.find((item) => item.capability === capability);
+      const readiness = serverReadiness.get(pack.server_ref);
+      const declaredTools = declaration.operations.map(({ tool }) => tool);
+      const ready = readiness.tools !== null && declaredTools.every((tool) => (
+        readiness.tools.has(tool)
+      ));
+      return {
+        capability,
+        code: ready ? "READY" : "CAPABILITY_UNAVAILABLE",
+        latency_ms: readiness.latency_ms,
+        ...(required.has(capability) ? { required: true } : {})
+      };
+    });
+    if (publicWebSearchAllowed) {
+      capabilities.push({
+        capability: PUBLIC_WEB_SEARCH_CAPABILITY.capability,
+        code: "READY",
+        latency_ms: 0,
+        ...(required.has(PUBLIC_WEB_SEARCH_CAPABILITY.capability)
+          ? { required: true }
+          : {})
+      });
+    }
+    const unavailable = capabilities.filter(({ code }) => code !== "READY");
+    const requiredUnavailable = unavailable.some(({ capability }) => required.has(capability));
+    return check(
+      requiredUnavailable ? "fail" : unavailable.length > 0 ? "warning" : "pass",
+      unavailable.length > 0 ? "CAPABILITY_UNAVAILABLE" : "READY",
+      { capabilities }
+    );
+  } catch {
+    return check("fail", "CAPABILITY_CONFIG_INVALID", { capabilities: [] });
+  }
+}
+
 function summarizeServices(services) {
   return {
     installed: services.installed === true,
@@ -2761,7 +3246,7 @@ function configuredControlMode(config) {
   return config.console ? "base" : "local";
 }
 
-async function status(root, serviceOptions, options, environment) {
+async function status(root, serviceOptions, options, environment, resolveCapabilityServer) {
   const installation = await readInstallation(root, { required: false });
   if (!installation) {
     return {
@@ -2801,7 +3286,10 @@ async function status(root, serviceOptions, options, environment) {
       .then(() => runtimeCommand(root, installation, "state"))
       .catch(() => ({ frozen: true, state_available: false })),
     serviceStatus(root, serviceOptions),
-    doctor(root, serviceOptions, options, environment, { checkServices: false })
+    doctor(root, serviceOptions, options, environment, {
+      checkServices: false,
+      resolveCapabilityServer
+    })
   ]);
   const configured = config !== null;
   let productionEnabled = false;
@@ -2855,7 +3343,8 @@ async function doctor(
   environment,
   {
     checkServices = true,
-    requirePrimaryBaseMasterSwitch = false
+    requirePrimaryBaseMasterSwitch = false,
+    resolveCapabilityServer = async () => undefined
   } = {}
 ) {
   const installation = await readInstallation(root);
@@ -2891,6 +3380,7 @@ async function doctor(
     codex_runtime: check("fail", "CONFIG_REQUIRED"),
     production_data: check("fail", "CONFIG_REQUIRED"),
     inference: check("fail", "NOT_CHECKED"),
+    capabilities: check("fail", "CONFIG_REQUIRED", { capabilities: [] }),
     services: services === null
       ? check("warning", "NOT_CHECKED")
       : services.installed && services.loaded
@@ -2906,6 +3396,11 @@ async function doctor(
   }
   let codexConfiguration;
   if (config) {
+    checks.capabilities = await capabilitiesDoctor(
+      configPath,
+      config,
+      resolveCapabilityServer
+    );
     const lark = larkAuthDoctor(
       config.lark_cli_bin ?? "lark-cli",
       config.profile,
@@ -2961,7 +3456,8 @@ async function doctor(
     "production_data",
     "inference"
   ];
-  const healthy = required.every((name) => checks[name].status === "pass");
+  const healthy = required.every((name) => checks[name].status === "pass") &&
+    checks.capabilities.status !== "fail";
   return {
     healthy,
     ready_for_service: healthy && process.platform === "darwin",
@@ -2970,11 +3466,13 @@ async function doctor(
 }
 
 async function requireDoctorReady(root, serviceOptions, options, environment, {
-  requirePrimaryBaseMasterSwitch = false
+  requirePrimaryBaseMasterSwitch = false,
+  resolveCapabilityServer = async () => undefined
 } = {}) {
   const health = await doctor(root, serviceOptions, options, environment, {
     checkServices: false,
-    requirePrimaryBaseMasterSwitch
+    requirePrimaryBaseMasterSwitch,
+    resolveCapabilityServer
   });
   if (health.ready_for_service !== true) {
     const summary = summarizeDoctor(health);
@@ -3227,9 +3725,18 @@ async function uninstall(root, serviceOptions, options) {
   };
 }
 
-async function serviceCommand(root, action, serviceOptions, options, environment) {
+async function serviceCommand(
+  root,
+  action,
+  serviceOptions,
+  options,
+  environment,
+  resolveCapabilityServer
+) {
   if (new Set(["install", "start", "restart"]).has(action)) {
-    await requireDoctorReady(root, serviceOptions, options, environment);
+    await requireDoctorReady(root, serviceOptions, options, environment, {
+      resolveCapabilityServer
+    });
   }
   if (action === "install") {
     return installServices(root, { ...serviceOptions, start: options.no_start !== true });
@@ -3252,10 +3759,13 @@ async function controlCommand({
   packageRoot,
   serviceOptions,
   options,
-  environment
+  environment,
+  resolveCapabilityServer
 }) {
   if (action === "enable") {
-    await requireDoctorReady(root, serviceOptions, options, environment);
+    await requireDoctorReady(root, serviceOptions, options, environment, {
+      resolveCapabilityServer
+    });
     await requireServicesReady(root, serviceOptions);
     return changeFreeze(root, false);
   }
@@ -3278,7 +3788,8 @@ export async function runProductCli({
   packageRoot,
   stdout = process.stdout,
   stderr = process.stderr,
-  environment = process.env
+  environment = process.env,
+  resolveCapabilityServer = async () => undefined
 }) {
   try {
     const { options, positionals } = parseArguments(argv);
@@ -3301,7 +3812,14 @@ export async function runProductCli({
     if (command === "init") result = await init(root, packageRoot, options);
     else if (command === "profiles") result = await availableProfiles(options, environment);
     else if (command === "setup") {
-      result = await setup(root, packageRoot, serviceOptions, options, environment);
+      result = await setup(
+        root,
+        packageRoot,
+        serviceOptions,
+        options,
+        environment,
+        resolveCapabilityServer
+      );
     }
     else if (command === "configure") {
       result = await configure(root, packageRoot, options, environment);
@@ -3313,14 +3831,24 @@ export async function runProductCli({
       result = await updateConfig(root, packageRoot, options, environment, serviceOptions);
     }
     else if (command === "doctor") {
-      result = await doctor(root, serviceOptions, options, environment);
+      result = await doctor(root, serviceOptions, options, environment, {
+        resolveCapabilityServer
+      });
     }
     else if (command === "status") {
-      result = await status(root, serviceOptions, options, environment);
+      result = await status(
+        root,
+        serviceOptions,
+        options,
+        environment,
+        resolveCapabilityServer
+      );
     }
     else if (command === "freeze") result = await changeFreeze(root, true);
     else if (command === "resume") {
-      await requireDoctorReady(root, serviceOptions, options, environment);
+      await requireDoctorReady(root, serviceOptions, options, environment, {
+        resolveCapabilityServer
+      });
       await requireServicesReady(root, serviceOptions);
       result = await changeFreeze(root, false);
     }
@@ -3331,12 +3859,20 @@ export async function runProductCli({
         packageRoot,
         serviceOptions,
         options,
-        environment
+        environment,
+        resolveCapabilityServer
       });
     }
     else if (command === "service") {
       if (subcommand === "run") options.role = role;
-      result = await serviceCommand(root, subcommand, serviceOptions, options, environment);
+      result = await serviceCommand(
+        root,
+        subcommand,
+        serviceOptions,
+        options,
+        environment,
+        resolveCapabilityServer
+      );
       if (subcommand === "run") return result.internal_exit_code;
     } else if (command === "upgrade") {
       result = await upgrade(root, packageRoot, serviceOptions, options, environment);

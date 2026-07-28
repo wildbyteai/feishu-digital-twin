@@ -24,6 +24,7 @@ path = [
   "continuity.example.json",
   "deploy/**",
   "docs/**",
+  "examples/**",
   "executor/**",
   "intake/**",
   "ops/**",

@@ -9,6 +9,10 @@
   "codex_timeout_ms": 120000,
   "max_ai_action_rounds": 3,
   "production_data_approved": false,
+  "public_web_search_approved": false,
+  "private_capability_packs": [],
+  "allowed_capabilities": [],
+  "required_capabilities": [],
   "control": {
     "mode": "local",
     "enabled": false

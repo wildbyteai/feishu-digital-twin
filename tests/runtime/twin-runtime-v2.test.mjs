@@ -5,6 +5,10 @@ import path from "node:path";
 import test from "node:test";
 
 import { LarkGuard } from "../../executor/src/lark-guard.mjs";
+import {
+  CapabilityGateway,
+  FakeCapabilityAdapter
+} from "../../runtime/src/capability-gateway.mjs";
 import { FakeInferenceAdapter } from "../../runtime/src/inference-adapter.mjs";
 import { RuntimeState } from "../../runtime/src/runtime-state.mjs";
 import { TwinRuntime } from "../../runtime/src/twin-runtime.mjs";
@@ -184,6 +188,121 @@ test("TwinRuntime 每条消息使用同一份最新配置快照，并同步收�
     ]);
     assert.deepEqual(promptConfigs[1].group_rules, ["新群规则"]);
     assert.equal(executed.length, 0);
+  } finally {
+    runtimeState.close();
+  }
+});
+
+test("TwinRuntime 每条消息同步收紧 AI 可见能力和可信 lookup", async () => {
+  const internalCapability = {
+    capability: "example.records.read",
+    purpose: "读取合成记录",
+    operations: ["get"],
+    risk: "read",
+    trust_zone: "internal",
+    readiness: "ready",
+    input_description: "合成记录标识"
+  };
+  const publicCapability = {
+    capability: "public.web.search",
+    purpose: "查询合成公开信息",
+    operations: ["search"],
+    risk: "read",
+    trust_zone: "public",
+    readiness: "ready",
+    input_description: "合成公开查询"
+  };
+  let publicCalls = 0;
+  const capabilityGateway = new CapabilityGateway({
+    capabilities: [internalCapability, publicCapability],
+    adapters: new Map([
+      ["example.records.read", new FakeCapabilityAdapter(async () => ({
+        status: "complete",
+        data: { title: "合成记录" },
+        source_refs: []
+      }))],
+      ["public.web.search", new FakeCapabilityAdapter(async () => {
+        publicCalls += 1;
+        return { status: "complete", data: { title: "不应读取" }, source_refs: [] };
+      })]
+    ])
+  });
+  const original = config({
+    allowed_capabilities: ["example.records.read", "public.web.search"]
+  });
+  const runtimeState = state();
+  const snapshots = [
+    original,
+    { ...original, allowed_capabilities: ["example.records.read"] }
+  ];
+  const visibleSnapshots = [];
+  try {
+    const runtime = new TwinRuntime({
+      config: original,
+      state: runtimeState,
+      guard: guard(original),
+      capabilityGateway,
+      refreshConfig: async () => snapshots.shift(),
+      createGuard: guard,
+      inferenceAdapter: new FakeInferenceAdapter(async (request) => {
+        visibleSnapshots.push(request.promptContext.capabilities ?? []);
+        if (request.event.event_id === "evt_capability_old") {
+          return {
+            event_id: request.event.event_id,
+            outcome: "ignore",
+            reason: "只验证旧能力快照",
+            response: null,
+            commands: [],
+            lookup_requests: [],
+            source_refs: [request.event.message_id]
+          };
+        }
+        if ((request.event.capability_feedback ?? []).length === 0) {
+          return {
+            event_id: request.event.event_id,
+            outcome: "reply",
+            reason: "尝试已被收紧的公开查询",
+            response: { mode: "representative", text: "准备查询。" },
+            commands: [],
+            lookup_requests: [{
+              capability: "public.web.search",
+              operation: "search",
+              input: { query: "合成公开信息" },
+              reason: "验证动态能力上限"
+            }],
+            source_refs: [request.event.message_id]
+          };
+        }
+        return {
+          event_id: request.event.event_id,
+          outcome: "reply",
+          reason: "能力不可用",
+          response: { mode: "suggestion", text: "需要人工处理。" },
+          commands: [],
+          lookup_requests: [],
+          source_refs: [request.event.message_id]
+        };
+      })
+    });
+
+    await runtime.handle(event({
+      event_id: "evt_capability_old",
+      message_id: "om_capability_old"
+    }));
+    const narrowed = await runtime.handle(event({
+      event_id: "evt_capability_new",
+      message_id: "om_capability_new"
+    }));
+
+    assert.deepEqual(visibleSnapshots[0].map(({ capability }) => capability), [
+      "example.records.read",
+      "public.web.search"
+    ]);
+    assert.deepEqual(visibleSnapshots[1].map(({ capability }) => capability), [
+      "example.records.read"
+    ]);
+    assert.equal(narrowed.lookups[0].result.status, "unavailable");
+    assert.equal(publicCalls, 0);
   } finally {
     runtimeState.close();
   }

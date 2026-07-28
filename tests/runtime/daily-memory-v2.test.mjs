@@ -5,6 +5,10 @@ import path from "node:path";
 import test from "node:test";
 
 import { LarkGuard } from "../../executor/src/lark-guard.mjs";
+import {
+  CapabilityGateway,
+  FakeCapabilityAdapter
+} from "../../runtime/src/capability-gateway.mjs";
 import { buildDecisionPrompt } from "../../runtime/src/prompt.mjs";
 import {
   assertDailyMemoryCommand,
@@ -420,6 +424,70 @@ test("每日系统事件拒绝 AI 生成的聊天发送命令", async () => {
       /cannot send messages/u
     );
     assert.equal(calls.length, 0);
+  } finally {
+    runtimeState.close();
+  }
+});
+
+test("每日系统事件不公开或执行普通消息能力查询", async () => {
+  const database = path.join(mkdtempSync(path.join(tmpdir(), "daily-memory-capability-")), "state.sqlite");
+  const runtimeState = new RuntimeState(database);
+  let adapterCalls = 0;
+  let promptCapabilities;
+  const guard = new LarkGuard({
+    larkBin: "/opt/homebrew/bin/lark-cli",
+    profile: "example_profile",
+    principalName: "示例负责人",
+    allowedDomains: config().allowed_lark_domains,
+    runner: async () => ({ exit_code: 0, stdout: JSON.stringify({ ok: true }), stderr: "" })
+  });
+  try {
+    const service = new TwinService({
+      config: config(),
+      state: runtimeState,
+      guard,
+      refreshProductionEnabled: async () => true,
+      capabilityGateway: new CapabilityGateway({
+        capabilities: [{
+          capability: "fixture.workflow.read",
+          purpose: "读取合成流程内容",
+          operations: ["get"],
+          risk: "read",
+          trust_zone: "internal",
+          readiness: "ready",
+          input_description: "一个合成流程标识"
+        }],
+        adapters: new Map([["fixture.workflow.read", new FakeCapabilityAdapter(async () => {
+          adapterCalls += 1;
+          return { status: "empty-result" };
+        })]])
+      }),
+      runCodex: async (input, options) => {
+        promptCapabilities = options.promptContext.capabilities;
+        return {
+          event_id: input.event_id,
+          outcome: "reply",
+          reason: "错误地产生普通消息能力查询",
+          response: null,
+          commands: [],
+          lookup_requests: [{
+            capability: "fixture.workflow.read",
+            operation: "get",
+            input: { workflow_id: "fixture-42" },
+            reason: "不应查询"
+          }],
+          source_refs: [input.message_id]
+        };
+      }
+    });
+    await assert.rejects(
+      () => service.runDailyMemory("2026-07-16", {
+        now: new Date("2026-07-17T00:10:00.000Z")
+      }),
+      /cannot request capability lookup/u
+    );
+    assert.equal(promptCapabilities, undefined);
+    assert.equal(adapterCalls, 0);
   } finally {
     runtimeState.close();
   }

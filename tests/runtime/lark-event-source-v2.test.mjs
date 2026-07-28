@@ -106,3 +106,40 @@ test("官方群资料读取失败时允许用未知属性继续规范化 Bot 事
     tenant_key: null
   });
 });
+
+test("官方事件保留可用的回复、父消息、根消息、话题、更新时间和提及元数据", () => {
+  assert.deepEqual(officialEventToRawMessage({
+    type: "im.message.receive_v1",
+    event_id: "evt-context",
+    chat_id: "oc_context",
+    chat_type: "group",
+    message_id: "om_current",
+    sender_id: "ou_member",
+    create_time: "1784167200000",
+    update_time: "1784167260000",
+    message_type: "post",
+    content: "{\"zh_cn\":{\"title\":\"审批流程\",\"content\":[[{\"tag\":\"a\",\"text\":\"查看流程\",\"href\":\"https://example.invalid/workflow\"}]]}}",
+    reply_to_message_id: "om_replied",
+    parent_id: "om_parent",
+    root_id: "om_root",
+    thread_id: "omt_context",
+    mentions: [{ id: "ou_principal", name: "示例负责人" }]
+  }), {
+    event_id: "evt-context",
+    chat_id: "oc_context",
+    chat_type: "group",
+    message_id: "om_current",
+    sender_id: "ou_member",
+    create_time: "1784167200000",
+    update_time: "1784167260000",
+    message_type: "post",
+    content: "{\"zh_cn\":{\"title\":\"审批流程\",\"content\":[[{\"tag\":\"a\",\"text\":\"查看流程\",\"href\":\"https://example.invalid/workflow\"}]]}}",
+    reply_to_message_id: "om_replied",
+    parent_id: "om_parent",
+    root_id: "om_root",
+    thread_id: "omt_context",
+    mentions: [{ id: "ou_principal", name: "示例负责人" }],
+    is_external: null,
+    tenant_key: null
+  });
+});
