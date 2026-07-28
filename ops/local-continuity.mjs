@@ -11,6 +11,7 @@ import {
   evaluateContinuityHealth
 } from "./continuity-gate.mjs";
 import { readRuntimeHealthSnapshot } from "../runtime/src/runtime-health-snapshot.mjs";
+import { validIsoDate } from "../shared/daily-memory-trigger.mjs";
 
 const SERVICE_ROLES = Object.freeze(["realtime", "supplement", "daily_memory"]);
 const PRIVATE_ROOT_ROLES = Object.freeze(["runtime", "codex"]);
@@ -334,7 +335,7 @@ async function dailyMemoryResult(filename) {
     }
     return {
       last_result_parseable: parsed !== null,
-      last_result_has_target_date: typeof parsed?.target_date === "string",
+      last_result_has_target_date: validIsoDate(parsed?.target_date),
       last_result_at: metadata.mtime.toISOString()
     };
   } catch (error) {

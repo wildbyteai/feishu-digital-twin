@@ -505,18 +505,47 @@ async function supplementIsDue(root, config, now = new Date()) {
   return true;
 }
 
-function dailyMemoryDue(config, marker, now) {
+function dailyMemoryDue(config, marker, now, activeVersion) {
   if (!config.daily_memory) return null;
   const timezone = config.principal.timezone;
   const { local_date: localDate, hour, minute } = localScheduleParts(now, timezone);
   const scheduledMinutes = config.schedule.daily_memory_hour * 60 +
     config.schedule.daily_memory_minute;
   if (hour * 60 + minute < scheduledMinutes) return null;
-  if (marker.last_success_local_date === localDate) return null;
+  const targetDate = previousDateInTimeZone(now, timezone);
+  if (marker.last_success_local_date === localDate) {
+    if (
+      marker.last_success_target_date !== targetDate ||
+      marker.last_evidence_version === activeVersion
+    ) return null;
+    return { localDate, targetDate, evidenceOnly: true };
+  }
   return {
     localDate,
-    targetDate: previousDateInTimeZone(now, timezone)
+    targetDate,
+    evidenceOnly: false
   };
+}
+
+async function logDailyMemoryEvidence({
+  versionRoot,
+  logPath,
+  logPolicy,
+  targetDate
+}) {
+  const logger = spawn(process.execPath, [
+    path.join(versionRoot, "ops/service-result-log.mjs"),
+    logPath,
+    String(logPolicy.maxBytes),
+    String(logPolicy.maxAgeSeconds)
+  ], { stdio: ["pipe", "inherit", "inherit"] });
+  logger.stdin.end(`${JSON.stringify({
+    outcome: "ignore",
+    executions: [],
+    confirmations: [],
+    target_date: targetDate
+  })}\n`);
+  return exitCode(await waitForExit(logger));
 }
 
 async function runDailyMemoryProcess({
@@ -545,6 +574,7 @@ async function runDailyMemoryProcess({
 export async function runServiceRole(root, role, {
   now = new Date(),
   dailyMemoryRunner = runDailyMemoryProcess,
+  dailyMemoryEvidenceLogger = logDailyMemoryEvidence,
   supplementRunner = runSupplement
 } = {}) {
   if (!SERVICE_ROLES.includes(role)) {
@@ -583,8 +613,25 @@ export async function runServiceRole(root, role, {
   }
   const markerPath = path.join(root, "private/daily-memory-schedule.json");
   const marker = await readJson(markerPath, "INVALID_SERVICE_SCHEDULE") ?? {};
-  const due = dailyMemoryDue(config, marker, now);
+  const due = dailyMemoryDue(config, marker, now, installation.active_version);
   if (!due) return 0;
+  if (due.evidenceOnly) {
+    const code = await dailyMemoryEvidenceLogger({
+      versionRoot,
+      logPath: path.join(logs, "daily-memory.stdout.log"),
+      logPolicy,
+      targetDate: due.targetDate
+    });
+    if (code === 0) {
+      await writePrivateJson(markerPath, {
+        last_success_at: marker.last_success_at,
+        last_success_local_date: marker.last_success_local_date,
+        last_success_target_date: marker.last_success_target_date,
+        last_evidence_version: installation.active_version
+      });
+    }
+    return code;
+  }
   const code = await dailyMemoryRunner({
     versionRoot,
     configPath,
@@ -597,7 +644,8 @@ export async function runServiceRole(root, role, {
     await writePrivateJson(markerPath, {
       last_success_at: now.toISOString(),
       last_success_local_date: due.localDate,
-      last_success_target_date: due.targetDate
+      last_success_target_date: due.targetDate,
+      last_evidence_version: installation.active_version
     });
   }
   return code;

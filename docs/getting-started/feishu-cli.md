@@ -15,7 +15,7 @@ lark-cli --version
 
 ```bash
 lark-cli profile list
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 profiles
+npx --yes github:wildbyteai/feishu-digital-twin profiles
 ```
 
 产品命令只读转发官方 profile 枚举，不切换当前 profile。不要为了安装数字分身切换、重命名或删除已有 profile。多个 profile 时，后续命令始终显式带 `--profile <profile>`，避免误用其他应用或租户；只有一个可用 profile 时 setup 可以自动选择。
@@ -73,6 +73,6 @@ lark-cli --profile <profile> auth check --scope "<space-separated-scopes>" --jso
 - 缺少 scope：根据错误中的 `missing_scopes` 或官方 schema 增量授权。
 - 事件未到达：检查开发者后台事件订阅、应用版本和可见范围，然后再看 `event status`。
 
-已运行实例出现上述问题时，先通过当前稳定标签运行 `freeze`。修复目标 profile 后重新运行 Doctor 或 `setup`；不要删除其他 profile，也不要用另一身份静默重试生产动作。
+已运行实例出现上述问题时，先通过无标签命令运行 `freeze`。修复目标 profile 后重新运行 Doctor 或 `setup`；不要删除其他 profile，也不要用另一身份静默重试生产动作。
 
 不要在公开 Issue/PR 粘贴配置、凭据、二维码、日志或业务正文。

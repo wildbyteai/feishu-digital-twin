@@ -314,6 +314,7 @@ test("版本 launcher 同时等待业务进程和脱敏 logger，保留业务退
     path.join(versionRoot, "bin"),
     path.join(versionRoot, "ops"),
     path.join(versionRoot, "runtime/src"),
+    path.join(versionRoot, "shared"),
     path.join(root, "private/logs")
   ]) mkdirSync(directory, { recursive: true, mode: 0o700 });
   writeFileSync(path.join(root, "installation.json"), JSON.stringify({
@@ -362,6 +363,10 @@ test("版本 launcher 同时等待业务进程和脱敏 logger，保留业务退
   cpSync(path.resolve("runtime/src/decision-diagnostics.mjs"), path.join(
     versionRoot,
     "runtime/src/decision-diagnostics.mjs"
+  ));
+  cpSync(path.resolve("shared/daily-memory-trigger.mjs"), path.join(
+    versionRoot,
+    "shared/daily-memory-trigger.mjs"
   ));
   writeFileSync(path.join(root, "private/logs/realtime.stderr.log"), `${JSON.stringify({
     logged_at: "2026-07-20T00:00:00.000Z",
@@ -487,6 +492,65 @@ test("补读结果日志忽略正常噪声并只保存有意义的脱敏摘要",
   assert.equal(readFileSync(logPath, "utf8").includes(executionHash), true);
   assert.equal(readFileSync(logPath, "utf8").includes("聊天正文"), false);
   assert.equal(statSync(logPath).mode & 0o777, 0o600);
+});
+
+test("正式结果 logger 保留合法每日记忆目标日期并丢弃无效值", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "twin-daily-target-log-"));
+  const logPath = path.join(directory, "daily-memory.stdout.log");
+  const result = await runLogger(logPath, 10 * 1024 * 1024, [{
+    outcome: "reply",
+    target_date: "2026-07-27",
+    response: { text: "不得落盘的每日记忆正文" },
+    executions: [],
+    confirmations: []
+  }, {
+    outcome: "reply",
+    target_date: "2026-02-30",
+    private_url: "https://private.example.invalid/daily-memory",
+    executions: [],
+    confirmations: []
+  }]);
+
+  assert.deepEqual(result, { code: 0, signal: null, stdout: "", stderr: "" });
+  const content = readFileSync(logPath, "utf8");
+  const lines = content.trim().split("\n").map(JSON.parse);
+  assert.equal(lines[0].target_date, "2026-07-27");
+  assert.equal(Object.hasOwn(lines[1], "target_date"), false);
+  assert.doesNotMatch(content, /每日记忆正文|private\.example/u);
+  assert.equal(statSync(logPath).mode & 0o777, 0o600);
+});
+
+test("正式结果 logger 保留带合法目标日期的静默日报幂等结果", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "twin-daily-idempotent-log-"));
+  const logPath = path.join(directory, "daily-memory.stdout.log");
+  const result = await runLogger(logPath, 10 * 1024 * 1024, [{
+    outcome: "ignore",
+    target_date: "2026-07-27",
+    reason: "不得落盘的幂等检查正文",
+    executions: [],
+    confirmations: []
+  }, {
+    outcome: "ignore",
+    target_date: "2026-02-30",
+    executions: [],
+    confirmations: []
+  }, {
+    outcome: "ignore",
+    executions: [],
+    confirmations: []
+  }, {
+    outcome: "checkpoint",
+    executions: [],
+    confirmations: []
+  }]);
+
+  assert.deepEqual(result, { code: 0, signal: null, stdout: "", stderr: "" });
+  const content = readFileSync(logPath, "utf8");
+  const lines = content.trim().split("\n").map(JSON.parse);
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].outcome, "ignore");
+  assert.equal(lines[0].target_date, "2026-07-27");
+  assert.doesNotMatch(content, /幂等检查正文/u);
 });
 
 test("补读结果日志超过上限时清空旧代际再继续写入", async () => {

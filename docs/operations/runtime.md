@@ -15,12 +15,12 @@
 ## 状态与日常控制
 
 ```bash
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 status
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 control enable
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 control freeze
+npx --yes github:wildbyteai/feishu-digital-twin status
+npx --yes github:wildbyteai/feishu-digital-twin control enable
+npx --yes github:wildbyteai/feishu-digital-twin control freeze
 npx --yes "github:wildbyteai/feishu-digital-twin#<target-tag>" control upgrade --restart
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 control rollback --restart
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 control uninstall
+npx --yes "github:wildbyteai/feishu-digital-twin#<target-tag>" control rollback --restart
+npx --yes github:wildbyteai/feishu-digital-twin control uninstall
 ```
 
 `status` 的用户级结论：
@@ -35,7 +35,7 @@ npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 control uninstall
 
 ## 本机数据与权限
 
-安装根、版本目录和 `private` 目录只属于当前用户；私有目录权限为 `0700`，配置、SQLite、计划文件和 `*.privacy-key` 为 `0600`。日志只保存脱敏阶段码、数量、耗时和错误分类，并按配置保留期和大小上限轮转。
+安装根、版本目录和 `private` 目录只属于当前用户；私有目录权限为 `0700`，配置、SQLite、计划文件和 `*.privacy-key` 为 `0600`。日志只保存脱敏阶段码、数量、耗时、错误分类，以及用于幂等日报审计的合法 `YYYY-MM-DD` 目标日期，并按配置保留期和大小上限轮转。
 
 ## 升级、回退和卸载
 

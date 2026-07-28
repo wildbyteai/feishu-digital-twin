@@ -28,7 +28,7 @@
 准备好环境后，在全局配置命令中显式传入：
 
 ```bash
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
+npx --yes github:wildbyteai/feishu-digital-twin setup \
   --profile <profile> \
   --codex-environment-root <private-codex-environment> \
   --approve-production-data

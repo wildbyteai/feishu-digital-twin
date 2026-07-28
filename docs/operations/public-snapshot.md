@@ -94,9 +94,9 @@ node bin/twin-public-snapshot.mjs \
   "$RELEASE_OUTPUT/candidates/sha256-<tree-digest>"
 ```
 
-该命令验证候选布局、tree、manifest、全部 SHA-256、SPDX 文件映射以及 in-toto/SLSA subject 绑定，只输出摘要。当前稳定分发只使用受保护主干和不可变 Git 标签，因此本地 attestation 只作为内容与来源校验证据，不宣称是 GitHub OIDC/Sigstore 签名。若以后通过新 ADR 增加独立制品发布渠道，再为该渠道定义签名要求。
+该命令验证候选布局、tree、manifest、全部 SHA-256、SPDX 文件映射以及 in-toto/SLSA subject 绑定，只输出摘要。当前普通分发使用受保护主干；不可变 Git 标签只用于需要精确锁定源码的场景。因此本地 attestation 只作为内容与来源校验证据，不宣称是 GitHub OIDC/Sigstore 签名。若以后通过新 ADR 增加独立制品发布渠道，再为该渠道定义签名要求。
 
-最初建立公共仓时不得复制私有 Git 历史；这一历史隔离约束继续有效。后续稳定版本只能通过受保护主干合并，并在必需检查通过后创建不可变 Git 标签。完整边界见[完整开源方案](../public/open-source-plan.md)。
+最初建立公共仓时不得复制私有 Git 历史；这一历史隔离约束继续有效。后续稳定版本只能通过受保护主干合并；如需创建不可变 Git 标签，只能在必需检查通过后指向该合并提交。完整边界见[完整开源方案](../public/open-source-plan.md)。
 
 成功 attestation 和失败 receipt 均使用 `0600`，绑定公开策略、合并后的私有扫描策略、manifest 和连续性证据摘要，只记录阶段码、规则码、清理状态和摘要，不保存实例配置路径、派生禁词、命中正文、原始健康报告或私有词表。实例配置只读一次并在内存中派生规则，不复制到 attempt、候选或 receipt。`status: attested` 只表示内容与证据已核验，不单独表示生成成功；只有候选目录存在，且 candidate ID、tree、manifest 与策略摘要全部和 attestation 配对时，才是可审核候选。attestation 先持久化，候选目录的最终原子 rename 是唯一公开候选可见边界，因此进程在两步之间被强制终止时最多留下无候选的私有 attestation，不会留下看似可发布的候选目录。
 

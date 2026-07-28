@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 
+import { validIsoDate } from "../../shared/daily-memory-trigger.mjs";
 import { safeDecisionReasonCode } from "./decision-diagnostics.mjs";
 
 const EXECUTION_HASH = /^execution_[a-f0-9]{64}$/u;
@@ -68,10 +69,11 @@ export function summarizeServiceResult(result, {
     confirmations: (result.confirmations ?? []).map((confirmation) => ({
       status: confirmation.delivery?.status ?? confirmation.status ?? "pending"
     })),
+    ...(validIsoDate(result.target_date) ? { target_date: result.target_date } : {}),
     ...(diagnostics ? { diagnostics } : {})
   };
 }
 
 export function shouldEmitServiceResult(result) {
-  return !SILENT_OUTCOMES.has(result?.outcome);
+  return validIsoDate(result?.target_date) || !SILENT_OUTCOMES.has(result?.outcome);
 }

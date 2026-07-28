@@ -117,7 +117,7 @@ Base 运行表必须包含“允许域”字段：值严格为“继承”时使
 
 CI 已使用只读默认权限和完整 commit SHA，运行格式检查、公共快照策略、通用 Secret/PII 扫描、完整合成测试、真实 npm package lifecycle 测试和 npm 文件清单；REUSE、CodeQL、Dependency Review、Dependabot 与 Scorecard 已在公共仓启用。本地候选生成确定性 SPDX 2.3 和未签名 in-toto/SLSA 来源记录，并通过 REUSE、只读一致性校验、源码归档完整测试、Codex 官方插件隔离安装和 npm 离线安装闭环，确认本地验证产物来自同一版本与同一允许文件集合。它们不作为独立公共下载渠道。
 
-稳定版本只通过公共源码仓和不可变 Git 标签交付。用户可以交给 Agent 安装，或通过固定标签的 `npx` 命令运行；不创建 GitHub Release，也不发布 Codex Marketplace 或 npm registry。标签必须指向已通过主干必需检查的合并提交。
+普通安装只通过受保护公共主干交付。用户可以交给 Agent 安装，或通过无标签的 `npx` 命令运行；需要精确锁定源码或执行显式升级、回退时可以使用不可变 Git 标签。不创建 GitHub Release，也不发布 Codex Marketplace 或 npm registry；如创建标签，必须指向已通过主干必需检查的合并提交。
 
 ## 开箱即用验收
 
@@ -130,7 +130,7 @@ CI 已使用只读默认权限和完整 commit SHA，运行格式检查、公共
 公开主入口为：
 
 ```bash
-npx --yes "github:wildbyteai/feishu-digital-twin#<stable-tag>" setup \
+npx --yes github:wildbyteai/feishu-digital-twin setup \
   --profile ... \
   --timezone ... \
   --codex-environment-root ... \

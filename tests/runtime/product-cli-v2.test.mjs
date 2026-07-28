@@ -27,7 +27,7 @@ import { runServiceRole } from "../../product/src/service-host.mjs";
 const projectRoot = path.resolve(import.meta.dirname, "../..");
 const cliPath = path.join(projectRoot, "bin/feishu-digital-twin.mjs");
 const fakeCodexFixture = path.join(projectRoot, "tests/fixtures/bin/codex");
-const CURRENT_VERSION = "0.1.12";
+const CURRENT_VERSION = "0.1.13";
 let syntheticInstanceSequence = 0;
 
 function runCli(executable, args, { env = {}, expected = 0 } = {}) {
@@ -4279,6 +4279,54 @@ test("daily-memory 按主体时区补跑、失败重试且成功后每日只执�
     dailyMemoryRunner
   }), 0);
   assert.deepEqual(attempts, ["2026-07-23", "2026-07-23", "2026-07-24"]);
+});
+
+test("daily-memory 升级后只记录一次同日幂等证据而不重复业务动作", async () => {
+  const { root } = initRoot("daily-schedule-evidence");
+  configureRoot(root, codexFixture(), {
+    overrides: {
+      daily_memory: {
+        folder_token: "fixture_daily_memory_folder",
+        folder_name: "合成每日工作记忆"
+      }
+    }
+  });
+  const markerPath = path.join(root, "private/daily-memory-schedule.json");
+  writeFileSync(markerPath, `${JSON.stringify({
+    last_success_at: "2026-07-24T15:00:00.000Z",
+    last_success_local_date: "2026-07-24",
+    last_success_target_date: "2026-07-23"
+  })}\n`, { mode: 0o600 });
+  let businessRuns = 0;
+  const evidence = [];
+  const options = {
+    dailyMemoryRunner: async () => {
+      businessRuns += 1;
+      return 0;
+    },
+    dailyMemoryEvidenceLogger: async ({ targetDate }) => {
+      evidence.push(targetDate);
+      return 0;
+    }
+  };
+
+  assert.equal(await runServiceRole(root, "daily_memory", {
+    ...options,
+    now: new Date("2026-07-24T15:01:00.000Z")
+  }), 0);
+  assert.equal(await runServiceRole(root, "daily_memory", {
+    ...options,
+    now: new Date("2026-07-24T15:02:00.000Z")
+  }), 0);
+
+  assert.equal(businessRuns, 0);
+  assert.deepEqual(evidence, ["2026-07-23"]);
+  assert.deepEqual(JSON.parse(readFileSync(markerPath, "utf8")), {
+    last_success_at: "2026-07-24T15:00:00.000Z",
+    last_success_local_date: "2026-07-24",
+    last_success_target_date: "2026-07-23",
+    last_evidence_version: CURRENT_VERSION
+  });
 });
 
 test("supplement 按可选 ISO 工作日集合选择工作与非工作间隔", async () => {

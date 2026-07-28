@@ -12,12 +12,12 @@
 - `--approve-message-scope`：首次选择或扩大 `internal_visible` / `all_visible` 时确认消息可见范围；
 - `--create-missing-resources`：明确允许官方 CLI 创建缺失的 Base、控制表、Wiki 空间或 Drive 日报目录。
 
-通过稳定标签运行 `setup --help` 可以直接看到两张 Base 表的字段、推荐初始值和启用顺序。Base 控制台是普通完整安装的强制配置：setup 会只读验证显式传入的 Base；没有现成 Base 时，添加 `--create-missing-resources` 后由官方 CLI 自动创建两张表和安全关闭的初始记录。首装完成后应先看到 `readiness=safe-but-disabled`；完成身份、权限和服务验收后再勾选 `数字分身启用`，等待最长约 10 秒并重新运行 status，直到显示 `readiness=ready`。
+通过无标签命令运行 `setup --help` 可以直接看到两张 Base 表的字段、推荐初始值和启用顺序。Base 控制台是普通完整安装的强制配置：setup 会只读验证显式传入的 Base；没有现成 Base 时，添加 `--create-missing-resources` 后由官方 CLI 自动创建两张表和安全关闭的初始记录。首装完成后应先看到 `readiness=safe-but-disabled`；完成身份、权限和服务验收后再勾选 `数字分身启用`，等待最长约 10 秒并重新运行 status，直到显示 `readiness=ready`。
 
 ## 主入口
 
 ```bash
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
+npx --yes github:wildbyteai/feishu-digital-twin setup \
   --profile <profile> \
   --timezone Asia/Shanghai \
   --codex-environment-root <private-codex-environment> \
@@ -51,7 +51,7 @@ npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
 普通路径使用 `--capabilities` 选择产品能力，由声明式目录生成去重的最小官方 lark-cli 业务域：
 
 ```bash
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
+npx --yes github:wildbyteai/feishu-digital-twin setup \
   --profile <profile> \
   --codex-environment-root <private-codex-environment> \
   --capabilities message,task,calendar,docs \
@@ -80,7 +80,7 @@ npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
 使用飞书 Base 作为唯一控制和规则来源时：
 
 ```bash
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
+npx --yes github:wildbyteai/feishu-digital-twin setup \
   --profile <profile> \
   --codex-environment-root <private-codex-environment> \
   --capabilities message,daily_memory \
@@ -98,7 +98,7 @@ npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
 没有现成 Base、但希望引用一个已有知识空间时，可把知识空间参数与自动创建开关一起提供：
 
 ```bash
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
+npx --yes github:wildbyteai/feishu-digital-twin setup \
   --profile <profile> \
   --codex-environment-root <private-codex-environment> \
   --capabilities message,enterprise_knowledge \
@@ -122,7 +122,7 @@ setup 会先确认已有知识空间可访问，再创建控制 Base，并把“
 没有现成资源时可直接运行：
 
 ```bash
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
+npx --yes github:wildbyteai/feishu-digital-twin setup \
   --profile <profile> \
   --codex-environment-root <private-codex-environment> \
   --capabilities message,enterprise_knowledge,daily_memory \
@@ -153,12 +153,12 @@ npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
 常用运行入口：
 
 ```bash
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 status
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 control freeze
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 control enable
+npx --yes github:wildbyteai/feishu-digital-twin status
+npx --yes github:wildbyteai/feishu-digital-twin control freeze
+npx --yes github:wildbyteai/feishu-digital-twin control enable
 npx --yes "github:wildbyteai/feishu-digital-twin#<target-tag>" control upgrade --restart
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 control rollback --restart
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 control uninstall
+npx --yes "github:wildbyteai/feishu-digital-twin#<target-tag>" control rollback --restart
+npx --yes github:wildbyteai/feishu-digital-twin control uninstall
 ```
 
 完整运行说明见[后台运行与维护](../operations/runtime.md)，隐私边界见[隐私与数据处理](../security/privacy.md)。

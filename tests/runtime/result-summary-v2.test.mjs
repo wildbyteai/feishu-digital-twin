@@ -65,6 +65,46 @@ test("运行输出拒绝格式无效的执行指纹", () => {
   assert.deepEqual(summary.executions, [{ status: "complete" }]);
 });
 
+test("每日记忆运行输出保留严格日期目标但不扩大脱敏摘要", () => {
+  const summary = summarizeServiceResult({
+    outcome: "reply",
+    target_date: "2026-07-27",
+    response: { text: "不得记录的每日记忆正文" },
+    resource_url: "https://private.example.invalid/daily-memory",
+    executions: [],
+    confirmations: []
+  }, {
+    traceId: () => "trace_daily_memory_target",
+    now: () => "2026-07-28T12:41:06.402Z"
+  });
+
+  assert.deepEqual(summary, {
+    trace_id: "trace_daily_memory_target",
+    logged_at: "2026-07-28T12:41:06.402Z",
+    outcome: "reply",
+    executions: [],
+    confirmations: [],
+    target_date: "2026-07-27"
+  });
+  assert.doesNotMatch(JSON.stringify(summary), /每日记忆正文|private\.example/u);
+});
+
+test("每日记忆运行输出丢弃非字符串或无效日历日期", () => {
+  for (const targetDate of [new String("2026-07-27"), "2026-02-30", "2026-7-27"]) {
+    const summary = summarizeServiceResult({
+      outcome: "reply",
+      target_date: targetDate,
+      executions: [],
+      confirmations: []
+    }, {
+      traceId: () => "trace_invalid_daily_target",
+      now: () => "2026-07-28T12:41:06.402Z"
+    });
+
+    assert.equal(Object.hasOwn(summary, "target_date"), false);
+  }
+});
+
 test("查询结果日志不保留查询正文、结果正文、来源或私有实现信息", () => {
   const summary = summarizeServiceResult({
     outcome: "reply",

@@ -21,7 +21,7 @@ lark-cli --profile <profile> drive +create-folder \
 也可以让 setup 自动完成同样的官方流程：
 
 ```bash
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
+npx --yes github:wildbyteai/feishu-digital-twin setup \
   --capabilities message,daily_memory \
   --create-missing-resources \
   <其他必需的 setup 选项>
@@ -34,7 +34,7 @@ setup 先按 `<主体用户显示名>的每日工作记忆` 在主体用户 Driv
 对已有文件夹，普通 setup 可直接保存引用：
 
 ```bash
-npx --yes github:wildbyteai/feishu-digital-twin#v0.1.12 setup \
+npx --yes github:wildbyteai/feishu-digital-twin setup \
   --capabilities message,daily_memory \
   --daily-memory-folder-token <folder-token> \
   --daily-memory-folder-name <文件夹名称> \
