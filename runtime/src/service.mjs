@@ -116,6 +116,24 @@ function highRiskDecision(decision, principalName) {
   };
 }
 
+function evidenceActionConfirmationDecision(decision, principalName) {
+  const body = stripAuthorityLabel(decision.response?.text ?? "建议执行该动作。");
+  return {
+    ...decision,
+    outcome: "confirm",
+    response: {
+      mode: "confirmation",
+      text: `${authorityLabel("confirmation", principalName)}${body}查询结果仅作为不可信证据，后续动作需由本人确认，确认前不会执行。`
+    },
+    lookup_requests: [],
+    executable_commands: [],
+    confirmation_commands: [
+      ...(decision.confirmation_commands ?? []),
+      ...(decision.executable_commands ?? [])
+    ]
+  };
+}
+
 function actionLimitDecision(decision) {
   const body = stripAuthorityLabel(decision.response?.text ?? "该事项仍需继续处理。");
   return {
@@ -125,6 +143,22 @@ function actionLimitDecision(decision) {
       mode: "suggestion",
       text: `${authorityLabel("suggestion", "主体用户")}${body}自动处理已达到本次步骤上限，请人工检查后继续。`
     },
+    lookup_requests: [],
+    executable_commands: [],
+    confirmation_commands: []
+  };
+}
+
+function capabilityFallbackDecision(decision, principalName) {
+  return {
+    ...decision,
+    outcome: decision.outcome === "draft" ? "draft" : "reply",
+    reason: "capability lookup requires human handling",
+    response: {
+      mode: "suggestion",
+      text: `${authorityLabel("suggestion", principalName)}已批准的业务资料查询未返回可读内容，无法据此形成可靠结论，请人工检查后继续处理。`
+    },
+    lookup_requests: [],
     executable_commands: [],
     confirmation_commands: []
   };
@@ -142,6 +176,14 @@ function executionFeedback(command, result, round) {
       risk: result.risk,
       data: result.data
     }).filter(([, value]) => value !== undefined && value !== null))
+  };
+}
+
+function capabilityFeedback(request, result, round) {
+  return {
+    round,
+    request: structuredClone(request),
+    result: structuredClone(result)
   };
 }
 
@@ -351,6 +393,7 @@ export class TwinService {
     state,
     guard,
     reader,
+    capabilityGateway,
     runCodex = runCodexDecision,
     sendConfirmation = sendPrivateConfirmation,
     refreshProductionEnabled = async () => config.production_enabled === true,
@@ -362,10 +405,17 @@ export class TwinService {
       throw new TypeError("refreshProductionEnabled must be a function");
     }
     if (typeof sleep !== "function") throw new TypeError("sleep must be a function");
+    if (capabilityGateway !== undefined && (
+      typeof capabilityGateway?.snapshot !== "function" ||
+      typeof capabilityGateway?.lookup !== "function"
+    )) {
+      throw new TypeError("capabilityGateway.snapshot and capabilityGateway.lookup are required");
+    }
     this.config = config;
     this.state = state;
     this.guard = guard;
     this.reader = reader;
+    this.capabilityGateway = capabilityGateway;
     this.runCodex = runCodex;
     this.sendConfirmation = sendConfirmation;
     this.refreshProductionEnabled = refreshProductionEnabled;
@@ -678,7 +728,15 @@ export class TwinService {
       const executions = [];
       const confirmations = [];
       const feedback = [];
+      const lookups = [];
       const silentSystemEvent = isSilentSystemEvent(event, this.config);
+      const capabilitySnapshot = silentSystemEvent
+        ? undefined
+        : this.capabilityGateway?.snapshot();
+      const capabilityTrustZones = new Map((capabilitySnapshot ?? []).map((capability) => [
+        capability.capability,
+        capability.trust_zone
+      ]));
       const maxActionRounds = this.config.max_ai_action_rounds ?? 3;
       if (!Number.isInteger(maxActionRounds) || maxActionRounds < 1 || maxActionRounds > 3) {
         throw new TypeError("config.max_ai_action_rounds must be an integer between 1 and 3");
@@ -686,6 +744,7 @@ export class TwinService {
       let actionRounds = 0;
       let emptyDailyDecisionRetries = 0;
       let automaticDailyVerificationAttempted = false;
+      let lookupTrustZone;
       let decision;
       while (true) {
         if (
@@ -709,6 +768,7 @@ export class TwinService {
           ...hydrated,
           reply_retry: retryingReply,
           execution_feedback: projectExecutionFeedback(feedback),
+          capability_feedback: structuredClone(lookups),
           action_budget_remaining: maxActionRounds - actionRounds,
           ...(progress ? {
             daily_memory_progress: progress,
@@ -718,6 +778,7 @@ export class TwinService {
         decision = await processEvent(input, {
           config: this.config,
           runtimeState: stateView(this.state),
+          capabilitySnapshot,
           runCodex: (candidate, context) => this.runCodex(candidate, {
             promptContext: context
           })
@@ -729,21 +790,57 @@ export class TwinService {
         )) {
           throw new Error("silent system event cannot request confirmation");
         }
+        if (silentSystemEvent && (decision.lookup_requests ?? []).length > 0) {
+          throw new Error("silent system event cannot request capability lookup");
+        }
 
         if (retryingReply) {
           decision = {
             ...decision,
+            lookup_requests: [],
             executable_commands: [],
             confirmation_commands: []
           };
           break;
         }
 
-        for (const command of decision.confirmation_commands ?? []) {
-          confirmations.push(await this.requestConfirmation(event, command, { requiresYes: false }));
+        if (
+          lookups.length > 0 &&
+          lookups.at(-1).result.status !== "complete" &&
+          (
+            (decision.lookup_requests ?? []).length > 0 ||
+            (decision.executable_commands ?? []).length > 0 ||
+            (decision.confirmation_commands ?? []).length > 0
+          )
+        ) {
+          decision = capabilityFallbackDecision(decision, this.config.principal.name);
+          break;
+        }
+
+        if (lookups.length > 0 && (decision.lookup_requests ?? []).length > 0) {
+          for (const request of decision.lookup_requests) {
+            lookups.push(capabilityFeedback(request, {
+              capability: request.capability,
+              operation: request.operation,
+              status: "denied"
+            }, actionRounds + 1));
+          }
+          decision = capabilityFallbackDecision(decision, this.config.principal.name);
+          break;
+        }
+        if (lookups.length > 0 && (decision.executable_commands ?? []).length > 0) {
+          decision = evidenceActionConfirmationDecision(decision, this.config.principal.name);
         }
 
         let commands = decision.executable_commands ?? [];
+        const lookupRequests = decision.lookup_requests ?? [];
+        if (lookupRequests.length === 0) {
+          for (const command of decision.confirmation_commands ?? []) {
+            confirmations.push(await this.requestConfirmation(event, command, {
+              requiresYes: false
+            }));
+          }
+        }
         if (
           silentSystemEvent &&
           commands.length === 0 &&
@@ -766,7 +863,9 @@ export class TwinService {
         if (silentSystemEvent && commands.some(isForbiddenDailyImCommand)) {
           throw new Error("silent system event cannot send messages");
         }
-        if (commands.length === 0 || decision.outcome === "draft") {
+        if ((commands.length === 0 && lookupRequests.length === 0) || (
+          decision.outcome === "draft" && lookupRequests.length === 0
+        )) {
           if (
             silentSystemEvent &&
             decision.outcome !== "draft" &&
@@ -784,6 +883,42 @@ export class TwinService {
         }
 
         actionRounds += 1;
+        for (const request of lookupRequests) {
+          const requestTrustZone = capabilityTrustZones.get(request.capability);
+          const crossTrustZone = lookupTrustZone !== undefined &&
+            requestTrustZone !== undefined &&
+            requestTrustZone !== lookupTrustZone;
+          if (lookupTrustZone === undefined && requestTrustZone !== undefined) {
+            lookupTrustZone = requestTrustZone;
+          }
+          const lookupResult = crossTrustZone
+            ? {
+                capability: request.capability,
+                operation: request.operation,
+                status: "denied"
+              }
+            : this.capabilityGateway
+              ? await this.capabilityGateway.lookup(request, {
+                  current_message_text: hydrated.text
+                })
+              : {
+                  capability: request.capability,
+                  operation: request.operation,
+                  status: "unavailable"
+                };
+          lookups.push(capabilityFeedback(request, lookupResult, actionRounds));
+        }
+        if (
+          lookupRequests.length > 0 &&
+          lookups.slice(-lookupRequests.length).some((item) => item.result.status !== "complete")
+        ) {
+          continue;
+        }
+        for (const command of decision.confirmation_commands ?? []) {
+          confirmations.push(await this.requestConfirmation(event, command, {
+            requiresYes: false
+          }));
+        }
         const roundFeedback = [];
         let platformConfirmation = false;
         for (const command of commands) {
@@ -863,10 +998,24 @@ export class TwinService {
           break;
         }
         if ((decision.confirmation_commands ?? []).length > 0) break;
-        if (roundFeedback.length > 0 && roundFeedback.every((item) => item.result.status === "duplicate")) {
+        if (
+          lookupRequests.length === 0 &&
+          roundFeedback.length > 0 &&
+          roundFeedback.every((item) => item.result.status === "duplicate")
+        ) {
           decision = actionLimitDecision(decision);
           break;
         }
+      }
+
+      if (
+        lookups.length > 0 &&
+        lookups.at(-1).result.status !== "complete" &&
+        (decision.lookup_requests ?? []).length === 0 &&
+        (decision.executable_commands ?? []).length === 0 &&
+        (decision.confirmation_commands ?? []).length === 0
+      ) {
+        decision = capabilityFallbackDecision(decision, this.config.principal.name);
       }
 
       if (retryingReply && (!decision.response || decision.outcome === "draft")) {
@@ -923,6 +1072,7 @@ export class TwinService {
       return {
         ...decision,
         executions,
+        lookups,
         confirmations,
         reply_retry: retryingReply,
         diagnostics: contextDiagnostics(hydrated, decision)

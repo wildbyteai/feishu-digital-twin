@@ -12,9 +12,10 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import { selectEnvironment } from "../../shared/subprocess-environment.mjs";
-import { buildDecisionPrompt } from "./prompt.mjs";
+import { buildDecisionPrompt, buildPublicSearchPrompt } from "./prompt.mjs";
 
 const decisionSchema = fileURLToPath(new URL("../schemas/codex-decision.schema.json", import.meta.url));
+const CODEX_PERMISSION_PROFILE = "feishu-digital-twin-public-search";
 const ENV_ALLOWLIST = new Set([
   "LANG",
   "LC_ALL",
@@ -90,7 +91,7 @@ export function prepareCodexIsolation(value) {
   return isolation;
 }
 
-function createCodexRunIsolation(isolation) {
+function createCodexRunIsolation(isolation, { includeSkills = true } = {}) {
   const runRoot = mkdtempSync(path.join(isolation.root, ".run-"));
   chmodSync(runRoot, 0o700);
   try {
@@ -101,11 +102,13 @@ function createCodexRunIsolation(isolation) {
       tmp: privateDirectory(path.join(runRoot, "tmp"), { create: true }),
       workspace: privateDirectory(path.join(runRoot, "workspace"), { create: true })
     };
-    cpSync(
-      path.join(isolation.skillsHome, ".agents"),
-      path.join(run.home, ".agents"),
-      { recursive: true, dereference: true, errorOnExist: true, force: false }
-    );
+    if (includeSkills) {
+      cpSync(
+        path.join(isolation.skillsHome, ".agents"),
+        path.join(run.home, ".agents"),
+        { recursive: true, dereference: true, errorOnExist: true, force: false }
+      );
+    }
     return run;
   } catch (error) {
     rmSync(runRoot, { recursive: true, force: true });
@@ -137,15 +140,38 @@ export function buildCodexEnvironment(environment, isolation) {
   };
 }
 
-export function buildCodexArguments(workspace) {
+function publicSearchFilesystemPermissions() {
+  return [
+    `permissions.${CODEX_PERMISSION_PROFILE}.filesystem={ `,
+    '":root" = "deny", ',
+    '":minimal" = "read", ',
+    '":workspace_roots" = { "." = "read" }, ',
+    '":tmpdir" = "deny", ',
+    '":slash_tmp" = "deny"',
+    " }"
+  ].join("");
+}
+
+export function buildCodexArguments(workspace, { publicWebSearch = false } = {}) {
+  if (typeof publicWebSearch !== "boolean") {
+    throw new TypeError("publicWebSearch must be a boolean");
+  }
   return [
     "--ask-for-approval",
     "never",
+    ...(publicWebSearch ? [
+      "--search",
+      "-c",
+      `default_permissions=${JSON.stringify(CODEX_PERMISSION_PROFILE)}`,
+      "-c",
+      publicSearchFilesystemPermissions(),
+      "-c",
+      `permissions.${CODEX_PERMISSION_PROFILE}.network.enabled=false`
+    ] : []),
     "exec",
     "--ephemeral",
     "--strict-config",
-    "--sandbox",
-    "read-only",
+    ...(publicWebSearch ? ["--ignore-user-config"] : ["--sandbox", "read-only"]),
     "--ignore-rules",
     "--skip-git-repo-check",
     "-c",
@@ -159,11 +185,15 @@ export function buildCodexArguments(workspace) {
   ];
 }
 
-function finalDecision(stdout) {
+function finalDecision(stdout, { requireWebSearch = false } = {}) {
+  let webSearchUsed = false;
   const messages = stdout.split(/\r?\n/u).flatMap((line) => {
     if (!line.trim()) return [];
     try {
       const event = JSON.parse(line);
+      if (event.type === "item.completed" && event.item?.type === "web_search") {
+        webSearchUsed = true;
+      }
       return event.type === "item.completed" &&
         event.item?.type === "agent_message" &&
         typeof event.item.text === "string"
@@ -173,6 +203,9 @@ function finalDecision(stdout) {
       return [];
     }
   });
+  if (requireWebSearch && !webSearchUsed) {
+    throw new Error("Codex did not perform required live Web Search");
+  }
   if (messages.length === 0) throw new Error("Codex returned no final agent message");
   return JSON.parse(messages.at(-1));
 }
@@ -181,15 +214,27 @@ export function runCodexDecision(event, {
   codexBin,
   isolationRoot,
   timeoutMs = 120000,
-  promptContext = {}
+  promptContext = {},
+  publicSearchQuery
 } = {}) {
+  if (
+    publicSearchQuery !== undefined &&
+    (typeof publicSearchQuery !== "string" || publicSearchQuery.length === 0)
+  ) {
+    throw new TypeError("publicSearchQuery must be a non-empty string when provided");
+  }
+  const publicWebSearch = publicSearchQuery !== undefined;
   const executable = resolveCodexExecutable(codexBin);
   const persistentIsolation = prepareCodexIsolation(isolationRoot);
-  const isolation = createCodexRunIsolation(persistentIsolation);
+  const isolation = createCodexRunIsolation(persistentIsolation, {
+    includeSkills: !publicWebSearch
+  });
   return new Promise((resolve, reject) => {
     let child;
     try {
-      child = spawn(executable, buildCodexArguments(isolation.workspace), {
+      child = spawn(executable, buildCodexArguments(isolation.workspace, {
+        publicWebSearch
+      }), {
         cwd: isolation.workspace,
         env: buildCodexEnvironment(process.env, isolation),
         stdio: ["pipe", "pipe", "pipe"]
@@ -236,13 +281,15 @@ export function runCodexDecision(event, {
         return finish(new Error(`Codex exited with code ${code} signal ${signal ?? "none"}`));
       }
       try {
-        finish(null, finalDecision(stdout));
+        finish(null, finalDecision(stdout, { requireWebSearch: publicWebSearch }));
       } catch (error) {
         finish(error);
       }
     });
     try {
-      child.stdin.end(buildDecisionPrompt(event, promptContext));
+      child.stdin.end(publicWebSearch
+        ? buildPublicSearchPrompt(event, publicSearchQuery)
+        : buildDecisionPrompt(event, promptContext));
     } catch (error) {
       child.kill("SIGTERM");
       finish(error);

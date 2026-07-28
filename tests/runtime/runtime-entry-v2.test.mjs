@@ -245,6 +245,126 @@ test("runtime 入口直接使用私有配置中的 Codex CLI 环境启动", asyn
   }
 });
 
+test("runtime 入口只加载显式安装的私有能力包且可选能力不可用时仍启动", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "twin-runtime-private-capability-"));
+  chmodSync(directory, 0o700);
+  const configPath = path.join(directory, "config.json");
+  const capabilityRoot = path.join(directory, "capabilities");
+  const databasePath = path.join(directory, "state.sqlite");
+  const isolationRoot = path.join(directory, "codex-runtime");
+  const codexBin = path.join(directory, "codex-capability-fixture.mjs");
+  const promptLog = path.join(directory, "prompt.log");
+  mkdirSync(path.join(isolationRoot, "codex-home"), { recursive: true, mode: 0o700 });
+  mkdirSync(capabilityRoot, { mode: 0o700 });
+  chmodSync(isolationRoot, 0o700);
+  installLarkSkill(isolationRoot);
+  writeFileSync(codexBin, `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+import process from "node:process";
+let prompt = "";
+process.stdin.setEncoding("utf8");
+for await (const chunk of process.stdin) prompt += chunk;
+appendFileSync(${JSON.stringify(promptLog)}, prompt + "\\n---\\n");
+const eventId = [...prompt.matchAll(/"event_id"\\s*:\\s*"([^"]+)"/gu)].at(-1)?.[1];
+const messageId = [...prompt.matchAll(/"message_id"\\s*:\\s*"([^"]+)"/gu)].at(-1)?.[1];
+process.stdout.write(JSON.stringify({
+  type: "item.completed",
+  item: { type: "agent_message", text: JSON.stringify({
+    event_id: eventId,
+    outcome: "ignore",
+    reason: "只验证能力快照",
+    response: null,
+    commands: [],
+    source_refs: [messageId]
+  }) }
+}) + "\\n");
+`, { mode: 0o700 });
+  writeFileSync(promptLog, "", { mode: 0o600 });
+  writeFileSync(path.join(capabilityRoot, "example.records.json"), `${JSON.stringify({
+    schema_version: 1,
+    pack_id: "example.records",
+    pack_version: "1.0.0",
+    server_ref: "example-managed-records",
+    tools: [{ name: "records.get", risk: "read" }],
+    capabilities: [{
+      capability: "example.records.read",
+      purpose: "读取合成记录",
+      operations: [{
+        operation: "get",
+        tool: "records.get",
+        input_constraints: {
+          allowed_fields: ["record_id"],
+          required_fields: ["record_id"],
+          max_bytes: 1024
+        }
+      }],
+      risk: "read",
+      trust_zone: "internal",
+      input_description: "合成记录标识",
+      failure_policy: "human-fallback"
+    }]
+  }, null, 2)}\n`, { mode: 0o600 });
+  writeFileSync(configPath, `${JSON.stringify({
+    schema_version: 2,
+    profile: "fixture-profile",
+    message_scope: "bot_only",
+    lark_cli_bin: fakeLark,
+    codex_bin: codexBin,
+    codex_environment_root: isolationRoot,
+    production_data_approved: true,
+    control: { mode: "local", enabled: true },
+    principal: {
+      name: "示例用户",
+      open_id: "ou_fixture_principal",
+      timezone: "Asia/Shanghai"
+    },
+    schedule: {
+      workday_start_hour: 9,
+      workday_end_hour: 18,
+      work_interval_seconds: 30,
+      quiet_interval_seconds: 300,
+      daily_memory_hour: 0,
+      daily_memory_minute: 10
+    },
+    allowed_lark_domains: ["im"],
+    private_capability_packs: ["example.records"],
+    allowed_capabilities: ["example.records.read"],
+    required_capabilities: []
+  }, null, 2)}\n`, { mode: 0o600 });
+
+  const child = spawn(process.execPath, [runtimeBin, "serve", configPath, databasePath], {
+    stdio: ["pipe", "pipe", "pipe"]
+  });
+  let stderr = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  try {
+    await waitForReady(child, () => stderr);
+    assert.match(stderr, /"type":"ready"/u);
+    assert.doesNotMatch(stderr, /example-managed-records|records\.get|example\.records/u);
+    child.stdin.write(`${JSON.stringify(protectedEvent("private-capability"))}\n`);
+    const output = await waitForCloseOrOutput(child);
+    const promptDiagnostic = readFileSync(promptLog, "utf8");
+    assert.equal(
+      output.type,
+      "output",
+      `${stderr || JSON.stringify(output)}\n${promptDiagnostic.slice(-2000)}`
+    );
+    const result = JSON.parse(output.value);
+    assert.equal(result.outcome, "ignore");
+    child.stdin.end();
+    assert.equal((await once(child, "close"))[0], 0, stderr);
+    const prompts = readFileSync(promptLog, "utf8");
+    assert.match(prompts, /example\.records\.read/u);
+    assert.match(prompts, /"readiness"\s*:\s*"unavailable"/u);
+    assert.doesNotMatch(prompts, /example-managed-records|records\.get/u);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+    if (child.exitCode === null && child.signalCode === null) await once(child, "close");
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("runtime 入口允许引用主体身份，但保护日报文件夹和日报排除群", async () => {
   const cases = [
     {

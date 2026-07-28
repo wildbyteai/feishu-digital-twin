@@ -98,6 +98,59 @@ test("Codex Doctor 只发送合成能力检查并返回脱敏状态", async () =
   assert.deepEqual(calls[0].options.promptContext, { doctor: true });
 });
 
+test("Codex 决策契约接受独立的语义能力查询且拒绝传输细节", async () => {
+  const adapter = new CodexInferenceAdapter({
+    codexBin: fakeCodex,
+    codexEnvironmentRoot: "/fixture/not-used",
+    runner: async (candidate) => ({
+      event_id: candidate.event_id,
+      outcome: "reply",
+      reason: "先读取流程再答复",
+      response: { mode: "representative", text: "我先核实流程。" },
+      commands: [],
+      lookup_requests: [{
+        capability: "fixture.workflow.read",
+        operation: "get",
+        input: { workflow_id: "fixture-42" },
+        reason: "核实流程状态"
+      }],
+      source_refs: [candidate.message_id]
+    })
+  });
+
+  const decision = await adapter.decide({ event: event() });
+  assert.deepEqual(decision.lookup_requests, [{
+    capability: "fixture.workflow.read",
+    operation: "get",
+    input: { workflow_id: "fixture-42" },
+    reason: "核实流程状态"
+  }]);
+
+  const transportAware = new CodexInferenceAdapter({
+    codexBin: fakeCodex,
+    codexEnvironmentRoot: "/fixture/not-used",
+    runner: async (candidate) => ({
+      event_id: candidate.event_id,
+      outcome: "reply",
+      reason: "错误地指定传输",
+      response: { mode: "suggestion", text: "无法处理。" },
+      commands: [],
+      lookup_requests: [{
+        capability: "fixture.workflow.read",
+        operation: "get",
+        input: { workflow_id: "fixture-42" },
+        reason: "核实流程状态",
+        server: "private-server"
+      }],
+      source_refs: [candidate.message_id]
+    })
+  });
+  await assert.rejects(
+    () => transportAware.decide({ event: event() }),
+    (error) => error instanceof InferenceError && error.code === "INFERENCE_INVALID_OUTPUT"
+  );
+});
+
 test("Codex 错误转换为稳定分类且不会泄漏底层错误正文或尝试备用运行环境", async () => {
   let calls = 0;
   const adapter = new CodexInferenceAdapter({

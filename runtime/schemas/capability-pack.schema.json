@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/feishu-digital-twin/capability-pack.schema.json",
+  "title": "Feishu digital twin private capability pack",
+  "description": "Versioned declarative mapping from semantic read capabilities to an explicitly managed MCP server reference.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "pack_id",
+    "pack_version",
+    "server_ref",
+    "tools",
+    "capabilities"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "pack_id": {
+      "$ref": "#/$defs/portableIdentifier"
+    },
+    "pack_version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+    },
+    "server_ref": {
+      "$ref": "#/$defs/portableIdentifier"
+    },
+    "tools": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "risk"],
+        "properties": {
+          "name": {
+            "$ref": "#/$defs/portableIdentifier"
+          },
+          "risk": {
+            "const": "read"
+          }
+        }
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "capability",
+          "purpose",
+          "operations",
+          "risk",
+          "trust_zone",
+          "input_description",
+          "failure_policy"
+        ],
+        "properties": {
+          "capability": {
+            "$ref": "#/$defs/portableIdentifier"
+          },
+          "purpose": {
+            "type": "string",
+            "minLength": 1
+          },
+          "operations": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["operation", "tool", "input_constraints"],
+              "properties": {
+                "operation": {
+                  "enum": [
+                    "fetch",
+                    "get",
+                    "inspect",
+                    "list",
+                    "lookup",
+                    "read",
+                    "search"
+                  ]
+                },
+                "tool": {
+                  "$ref": "#/$defs/portableIdentifier"
+                },
+                "input_constraints": {
+                  "$ref": "#/$defs/inputConstraints"
+                }
+              }
+            }
+          },
+          "risk": {
+            "const": "read"
+          },
+          "trust_zone": {
+            "const": "internal"
+          },
+          "input_description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "failure_policy": {
+            "const": "human-fallback"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "portableIdentifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "inputConstraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed_fields", "required_fields", "max_bytes"],
+      "properties": {
+        "allowed_fields": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/portableIdentifier"
+          }
+        },
+        "required_fields": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/portableIdentifier"
+          }
+        },
+        "max_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8192
+        }
+      }
+    }
+  }
+}

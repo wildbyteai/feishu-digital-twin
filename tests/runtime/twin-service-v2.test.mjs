@@ -301,6 +301,155 @@ test("普通群消息补读同群上下文后再由 AI 决定是否回复", asyn
   }
 });
 
+test("父消息已有内部流程链接时原会话直接使用该链接而不再次索要", async () => {
+  const runtimeState = state();
+  const calls = [];
+  const guard = new LarkGuard({
+    larkBin: "/opt/homebrew/bin/lark-cli",
+    profile: "example_profile",
+    principalName: "示例负责人",
+    allowedDomains: config().allowed_lark_domains,
+    runner: async (argv) => {
+      calls.push(argv);
+      return { exit_code: 0, stdout: JSON.stringify({ ok: true, data: {} }), stderr: "" };
+    }
+  });
+  try {
+    const service = new TwinService({
+      config: config(),
+      state: runtimeState,
+      guard,
+      reader: {
+        async getMessages(ids) {
+          assert.deepEqual(ids, ["om-workflow-parent"]);
+          return {
+            messages: [{
+              message_id: "om-workflow-parent",
+              chat_id: "oc_internal",
+              create_time: "2026-07-16T09:59:00.000Z",
+              message_type: "share_link",
+              content: JSON.stringify({
+                title: "内部审批流程",
+                url: "https://example.invalid/internal-workflow"
+              }),
+              sender: { id: "ou_member" }
+            }]
+          };
+        }
+      },
+      runCodex: async (input) => {
+        assert.deepEqual(input.context, [{
+          message_id: "om-workflow-parent",
+          sender_role: "participant",
+          content: "内部审批流程",
+          links: ["https://example.invalid/internal-workflow"],
+          link_only: true,
+          relation: "reply",
+          topic_key: null,
+          sent_at: "2026-07-16T09:59:00.000Z"
+        }]);
+        return {
+          event_id: input.event_id,
+          outcome: "reply",
+          reason: "链接已经在回复上下文中",
+          response: {
+            mode: "representative",
+            text: "该流程已经自动审批通过，请直接执行。"
+          },
+          commands: [],
+          source_refs: [input.message_id, "om-workflow-parent"]
+        };
+      }
+    });
+
+    const result = await service.handle(event({
+      event_id: "evt-existing-workflow-link",
+      message_id: "om-current-workflow-request",
+      text: "请看一下这个流程",
+      parent_message_id: "om-workflow-parent",
+      reply_to_message_id: "om-workflow-parent",
+      signals: { direct_mention: true, context_lookup_required: true }
+    }));
+
+    assert.equal(result.outcome, "reply");
+    assert.equal(result.diagnostics.context_scope, "reply");
+    assert.equal(result.diagnostics.context_count, 1);
+    assert.equal(
+      result.response.text,
+      "🤖【建议】当前消息或引用内容无法读取，无法据此形成可靠结论，请人工检查原消息或链接后继续处理。"
+    );
+    assert.doesNotMatch(result.response.text, /重新|再发|提供.*链接/u);
+    assert.equal(calls.some((argv) => (
+      argv.includes("+messages-reply") &&
+      argv.includes("--as") &&
+      argv.includes("bot")
+    )), true);
+  } finally {
+    runtimeState.close();
+  }
+});
+
+test("回复载荷确实不可读时原会话确定性建议人工处理且不调用 AI", async () => {
+  const runtimeState = state();
+  const calls = [];
+  let codexCalls = 0;
+  const guard = new LarkGuard({
+    larkBin: "/opt/homebrew/bin/lark-cli",
+    profile: "example_profile",
+    principalName: "示例负责人",
+    allowedDomains: config().allowed_lark_domains,
+    runner: async (argv) => {
+      calls.push(argv);
+      return { exit_code: 0, stdout: JSON.stringify({ ok: true, data: {} }), stderr: "" };
+    }
+  });
+  try {
+    const service = new TwinService({
+      config: config(),
+      state: runtimeState,
+      guard,
+      reader: {
+        async getMessages() {
+          return {
+            messages: [{
+              message_id: "om-unreadable-parent",
+              chat_id: "oc_internal",
+              create_time: "2026-07-16T09:59:00.000Z",
+              message_type: "interactive",
+              content: "{\"unsupported\":true}",
+              sender: { id: "ou_member" }
+            }]
+          };
+        }
+      },
+      runCodex: async () => {
+        codexCalls += 1;
+        throw new Error("unreadable referenced content must not reach AI");
+      }
+    });
+
+    const result = await service.handle(event({
+      event_id: "evt-unreadable-parent",
+      message_id: "om-current-unreadable",
+      text: "请处理我回复的内容",
+      parent_message_id: "om-unreadable-parent",
+      reply_to_message_id: "om-unreadable-parent",
+      signals: { direct_mention: true, context_lookup_required: true }
+    }));
+
+    assert.equal(codexCalls, 0);
+    assert.equal(result.outcome, "reply");
+    assert.equal(result.diagnostics.decision_reason_code, "CONTEXT_UNREADABLE");
+    assert.equal(
+      result.response.text,
+      "🤖【建议】当前消息或引用内容无法读取，无法据此形成可靠结论，请人工检查原消息或链接后继续处理。"
+    );
+    assert.equal(calls.some((argv) => argv.includes("+messages-reply")), true);
+  } finally {
+    runtimeState.close();
+  }
+});
+
 test("明确 @ 的群消息不额外补读最近群聊", async () => {
   const runtimeState = state();
   const guard = new LarkGuard({

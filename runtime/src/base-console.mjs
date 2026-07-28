@@ -26,6 +26,12 @@ export const BASE_CONSOLE_SETUP_SCHEMA = Object.freeze({
         initial_value: Object.freeze(["继承"])
       }),
       Object.freeze({
+        name: "允许能力",
+        type: "multi_select",
+        required: false,
+        initial_value: Object.freeze(["继承"])
+      }),
+      Object.freeze({
         name: "个性化规则",
         type: "multiline_text",
         required: true,
@@ -117,6 +123,49 @@ function allowedDomains(fields, localDomains) {
     );
   }
   return domains;
+}
+
+function localCapabilityMaximum(config) {
+  if (Array.isArray(config.allowed_capabilities)) return [...config.allowed_capabilities];
+  return config.public_web_search_approved === true ? ["public.web.search"] : [];
+}
+
+function allowedCapabilities(fields, config) {
+  const localCapabilities = localCapabilityMaximum(config);
+  if (!Object.hasOwn(fields, "允许能力")) return localCapabilities;
+  const raw = fields.允许能力;
+  const values = Array.isArray(raw) ? raw : [raw];
+  if (values.length === 0) {
+    throw new Error("Base console 允许能力 must be 继承 or a non-empty capability list");
+  }
+  const capabilities = values.flatMap((item) => {
+    const value = typeof item === "string"
+      ? item
+      : item?.text ?? item?.name ?? item?.value;
+    if (typeof value !== "string") {
+      throw new Error("Base console 允许能力 contains a non-text value");
+    }
+    return value.split(/\r?\n/u).map((capability) => {
+      const trimmed = capability.trim();
+      if (!trimmed) throw new Error("Base console 允许能力 contains an empty value");
+      return trimmed;
+    });
+  });
+  if (capabilities.length === 1 && capabilities[0] === "继承") return localCapabilities;
+  if (capabilities.includes("继承")) {
+    throw new Error("Base console 允许能力 cannot mix 继承 with explicit capabilities");
+  }
+  if (new Set(capabilities).size !== capabilities.length) {
+    throw new Error("Base console 允许能力 cannot contain duplicate capabilities");
+  }
+  const localCapabilitySet = new Set(localCapabilities);
+  const invalidCapabilities = capabilities.filter((capability) => (
+    !localCapabilitySet.has(capability)
+  ));
+  if (invalidCapabilities.length > 0) {
+    throw new Error("Base console 允许能力 exceeds the local permission ceiling");
+  }
+  return capabilities;
 }
 
 function requireTableFields(fields, requirements, { requiredPrimaryField = null } = {}) {
@@ -307,6 +356,7 @@ export async function loadBaseConsole(config, {
   const productionEnabled = runtimeSwitch(runtimeRecords);
   const fields = runtimeRecords[0].fields ?? {};
   const effectiveAllowedDomains = allowedDomains(fields, config.allowed_lark_domains);
+  const effectiveAllowedCapabilities = allowedCapabilities(fields, config);
   const authorityRules = lines(fields.个性化规则);
   const groupRules = groupRuleRecords.filter((record) => enabled(record.fields?.启用));
 
@@ -314,6 +364,7 @@ export async function loadBaseConsole(config, {
     ...config,
     production_enabled: productionEnabled,
     allowed_lark_domains: effectiveAllowedDomains,
+    allowed_capabilities: effectiveAllowedCapabilities,
     authority_rules: authorityRules.length > 0
       ? authorityRules
       : config.control?.mode === "base"

@@ -14,7 +14,7 @@ const principal = {
   address_names: ["模拟负责人"]
 };
 
-test("消息正文直接交给 AI，代码只保留确定性寻址和来源元数据", () => {
+test("文本消息正文直接交给 AI，代码只保留确定性寻址和来源元数据", () => {
   const normalized = normalizeInboundMessage({
     event_id: "evt_1",
     chat_id: "oc_simulated_group",
@@ -32,7 +32,94 @@ test("消息正文直接交给 AI，代码只保留确定性寻址和来源元�
   assert.deepEqual(normalized.event.context, []);
 });
 
-test("未明确寻址的普通群消息要求补读同群上下文，私聊不额外补读", () => {
+test("富文本和官方链接卡片投影有界可见文本与显式链接", () => {
+  const richText = normalizeInboundMessage({
+    event_id: "evt_rich",
+    chat_id: "oc_simulated_group",
+    chat_type: "group",
+    message_id: "om_rich",
+    sender_id: "ou_sender",
+    create_time: "1784078400000",
+    message_type: "post",
+    content: JSON.stringify({
+      zh_cn: {
+        title: "采购审批流程",
+        content: [[
+          { tag: "text", text: "请按新版流程处理" },
+          { tag: "a", text: "查看流程", href: "https://example.invalid/workflow" }
+        ]]
+      }
+    }),
+    parent_id: "om_parent",
+    root_id: "om_root",
+    thread_id: "omt_workflow"
+  }, { source: "event", principal });
+  const linkCard = normalizeInboundMessage({
+    chat_id: "oc_simulated_p2p",
+    chat_type: "p2p",
+    message_id: "om_link_card",
+    sender_id: "ou_sender",
+    create_time: "1784078400000",
+    message_type: "share_link",
+    content: JSON.stringify({
+      title: "内部流程入口",
+      url: "https://example.invalid/internal-flow"
+    })
+  }, { source: "supplement", principal });
+
+  assert.equal(richText.event.text, "采购审批流程\n请按新版流程处理\n查看流程");
+  assert.deepEqual(richText.event.links, ["https://example.invalid/workflow"]);
+  assert.equal(richText.event.parent_message_id, "om_parent");
+  assert.equal(richText.event.root_message_id, "om_root");
+  assert.equal(richText.event.thread_id, "omt_workflow");
+  assert.equal(linkCard.event.text, "内部流程入口");
+  assert.deepEqual(linkCard.event.links, ["https://example.invalid/internal-flow"]);
+  assert.equal(linkCard.event.link_only, true);
+});
+
+test("消息投影限制可见文本字节数和显式链接数量", () => {
+  const normalized = normalizeInboundMessage({
+    chat_id: "oc_bounded",
+    chat_type: "p2p",
+    message_id: "om_bounded",
+    sender_id: "ou_sender",
+    create_time: "1784078400000",
+    message_type: "post",
+    content: JSON.stringify({
+      zh_cn: {
+        title: "长正文",
+        content: [[
+          { tag: "text", text: "内容".repeat(10_000) },
+          ...Array.from({ length: 20 }, (_, index) => ({
+            tag: "a",
+            text: `链接${index}`,
+            href: `https://example.invalid/resource/${index}`
+          }))
+        ]]
+      }
+    })
+  }, { source: "supplement", principal });
+
+  assert.equal(Buffer.byteLength(normalized.event.text) <= 8 * 1024, true);
+  assert.equal(normalized.event.links.length, 10);
+});
+
+test("当前官方载荷没有可读文本或链接时标记人工兜底", () => {
+  const normalized = normalizeInboundMessage({
+    chat_id: "oc_unreadable",
+    chat_type: "p2p",
+    message_id: "om_unreadable",
+    sender_id: "ou_sender",
+    create_time: "1784078400000",
+    message_type: "interactive",
+    content: "{\"unsupported\":true}"
+  }, { source: "supplement", principal });
+
+  assert.equal(normalized.event.text, "");
+  assert.equal(normalized.event.signals.content_unreadable, true);
+});
+
+test("未明确寻址的普通群消息和单聊要求补读同会话上下文", () => {
   const group = normalizeInboundMessage({
     chat_id: "oc_simulated_group",
     chat_type: "group",
@@ -62,7 +149,7 @@ test("未明确寻址的普通群消息要求补读同群上下文，私聊不�
   }, { source: "supplement", principal });
 
   assert.equal(group.event.signals.context_lookup_required, true);
-  assert.equal(p2p.event.signals.context_lookup_required, false);
+  assert.equal(p2p.event.signals.context_lookup_required, true);
   assert.equal(image.event.signals.context_lookup_required, false);
 });
 
@@ -171,6 +258,232 @@ test("回复和话题上下文保持原有的父消息加官方倒序排列", as
     hydrated.context.map(({ message_id }) => message_id),
     ["om_parent_order", "om_latest_order", "om_older_order"]
   );
+});
+
+test("精确回复、父消息和根消息优先于话题上下文并保留引用关系", async () => {
+  const reader = {
+    async getMessages(ids) {
+      assert.deepEqual(ids, ["om_replied", "om_parent", "om_root"]);
+      return {
+        messages: [
+          {
+            message_id: "om_root",
+            chat_id: "oc_simulated_group",
+            thread_id: "omt_context",
+            create_time: "2026-07-16T08:58:00.000Z",
+            content: "根消息",
+            sender: { id: "ou_root" }
+          },
+          {
+            message_id: "om_parent",
+            chat_id: "oc_simulated_group",
+            thread_id: "omt_context",
+            create_time: "2026-07-16T08:59:00.000Z",
+            content: "父消息",
+            sender: { id: "ou_parent" }
+          },
+          {
+            message_id: "om_replied",
+            chat_id: "oc_simulated_group",
+            thread_id: "omt_context",
+            create_time: "2026-07-16T09:00:00.000Z",
+            content: JSON.stringify({
+              title: "内部流程",
+              url: "https://example.invalid/workflow"
+            }),
+            message_type: "share_link",
+            sender: { id: "ou_replied" }
+          }
+        ]
+      };
+    },
+    async listThread() {
+      return {
+        messages: [{
+          message_id: "om_thread_latest",
+          chat_id: "oc_simulated_group",
+          thread_id: "omt_context",
+          create_time: "2026-07-16T09:59:00.000Z",
+          content: "话题最新消息",
+          sender: { id: "ou_latest" }
+        }]
+      };
+    }
+  };
+
+  const hydrated = await hydrateCandidate({
+    message_id: "om_current",
+    chat_id: "oc_simulated_group",
+    chat_type: "group",
+    sender_open_id: "ou_member",
+    sent_at: "2026-07-16T10:00:00.000Z",
+    message_type: "text",
+    text: "请看一下这个流程",
+    thread_id: "omt_context",
+    root_message_id: "om_root",
+    parent_message_id: "om_parent",
+    reply_to_message_id: "om_replied",
+    signals: { context_lookup_required: true },
+    context: []
+  }, { reader, principal });
+
+  assert.deepEqual(
+    hydrated.context.map(({ message_id, relation }) => ({ message_id, relation })),
+    [
+      { message_id: "om_replied", relation: "reply" },
+      { message_id: "om_parent", relation: "parent" },
+      { message_id: "om_root", relation: "root" },
+      { message_id: "om_thread_latest", relation: "thread" }
+    ]
+  );
+  assert.deepEqual(hydrated.context[0].links, ["https://example.invalid/workflow"]);
+  assert.equal(hydrated.context[0].link_only, true);
+  assert.equal(hydrated.context_meta.limit, 20);
+});
+
+test("单聊最近上下文按时间排序且只在本次处理使用", async () => {
+  const calls = [];
+  const hydrated = await hydrateCandidate({
+    message_id: "om_p2p_current",
+    chat_id: "oc_simulated_p2p",
+    chat_type: "p2p",
+    sender_open_id: "ou_member",
+    sent_at: "2026-07-16T10:00:00.000Z",
+    message_type: "text",
+    text: "刚才那个流程怎么办？",
+    thread_id: null,
+    root_message_id: null,
+    parent_message_id: null,
+    reply_to_message_id: null,
+    signals: { context_lookup_required: true },
+    context: []
+  }, {
+    principal,
+    reader: {
+      async listMessages(options) {
+        calls.push(options);
+        return {
+          messages: [
+            {
+              message_id: "om_p2p_newer",
+              chat_id: "oc_simulated_p2p",
+              create_time: "2026-07-16T09:59:00.000Z",
+              content: "较新的单聊上下文",
+              sender: { id: "ou_member" }
+            },
+            {
+              message_id: "om_p2p_older",
+              chat_id: "oc_simulated_p2p",
+              create_time: "2026-07-16T09:58:00.000Z",
+              content: "较早的单聊上下文",
+              sender: { id: "ou_principal" }
+            }
+          ]
+        };
+      }
+    }
+  });
+
+  assert.deepEqual(calls, [{
+    chatId: "oc_simulated_p2p",
+    end: "2026-07-16T10:00:00.000Z",
+    order: "desc",
+    pageSize: 20
+  }]);
+  assert.deepEqual(
+    hydrated.context.map(({ message_id, relation }) => ({ message_id, relation })),
+    [
+      { message_id: "om_p2p_older", relation: "recent" },
+      { message_id: "om_p2p_newer", relation: "recent" }
+    ]
+  );
+  assert.equal(hydrated.context_meta.scope, "chat");
+});
+
+test("精确引用不可读时即使话题另有消息也标记确定性人工兜底", async () => {
+  const hydrated = await hydrateCandidate({
+    message_id: "om_unreadable_current",
+    chat_id: "oc_simulated_p2p",
+    chat_type: "p2p",
+    sender_open_id: "ou_member",
+    sent_at: "2026-07-16T10:00:00.000Z",
+    message_type: "text",
+    text: "请处理我回复的内容",
+    thread_id: "omt_unreadable",
+    root_message_id: null,
+    parent_message_id: "om_unreadable_parent",
+    reply_to_message_id: "om_unreadable_parent",
+    signals: { context_lookup_required: true },
+    context: []
+  }, {
+    principal,
+    reader: {
+      async getMessages() {
+        return {
+          messages: [{
+            message_id: "om_unreadable_parent",
+            chat_id: "oc_simulated_p2p",
+            create_time: "2026-07-16T09:59:00.000Z",
+            message_type: "interactive",
+            content: "{\"unsupported\":true}",
+            sender: { id: "ou_member" }
+          }]
+        };
+      },
+      async listThread() {
+        return {
+          messages: [{
+            message_id: "om_other_thread_message",
+            chat_id: "oc_simulated_p2p",
+            thread_id: "omt_unreadable",
+            create_time: "2026-07-16T09:58:00.000Z",
+            content: "话题中的其他可读消息",
+            sender: { id: "ou_other" }
+          }]
+        };
+      }
+    }
+  });
+
+  assert.deepEqual(
+    hydrated.context.map(({ message_id, relation }) => ({ message_id, relation })),
+    [{ message_id: "om_other_thread_message", relation: "thread" }]
+  );
+  assert.equal(hydrated.signals.context_unreadable, true);
+  assert.deepEqual(hydrated.context_meta, {
+    fetched: true,
+    scope: "thread",
+    count: 1,
+    limit: 20
+  });
+});
+
+test("当前消息可读但空话题不会误判为内容不可读", async () => {
+  const hydrated = await hydrateCandidate({
+    message_id: "om_empty_thread_current",
+    chat_id: "oc_simulated_group",
+    chat_type: "group",
+    sender_open_id: "ou_member",
+    sent_at: "2026-07-16T10:00:00.000Z",
+    message_type: "text",
+    text: "这是完整问题",
+    thread_id: "omt_empty",
+    root_message_id: null,
+    parent_message_id: null,
+    reply_to_message_id: null,
+    signals: { context_lookup_required: true },
+    context: []
+  }, {
+    principal,
+    reader: {
+      async listThread() {
+        return { messages: [] };
+      }
+    }
+  });
+
+  assert.equal(hydrated.signals.context_unreadable, undefined);
+  assert.equal(hydrated.context_meta.count, 0);
 });
 
 test("普通群消息只补读当前消息之前的同群上下文并按时间排序", async () => {

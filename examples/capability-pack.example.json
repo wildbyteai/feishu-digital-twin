@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "pack_id": "example.records",
+  "pack_version": "1.0.0",
+  "server_ref": "example-managed-records",
+  "tools": [
+    {
+      "name": "records.get",
+      "risk": "read"
+    }
+  ],
+  "capabilities": [
+    {
+      "capability": "example.records.read",
+      "purpose": "读取部署者管理的业务记录",
+      "operations": [
+        {
+          "operation": "get",
+          "tool": "records.get",
+          "input_constraints": {
+            "allowed_fields": [
+              "record_id"
+            ],
+            "required_fields": [
+              "record_id"
+            ],
+            "max_bytes": 1024
+          }
+        }
+      ],
+      "risk": "read",
+      "trust_zone": "internal",
+      "input_description": "record_id 是部署者管理的记录标识",
+      "failure_policy": "human-fallback"
+    }
+  ]
+}

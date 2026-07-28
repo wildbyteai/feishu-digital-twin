@@ -2,8 +2,14 @@ import { lstat, readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { OFFICIAL_LARK_BUSINESS_DOMAINS } from "../../shared/lark-capability-catalog.mjs";
+import {
+  compilePrivateCapabilityPacks,
+  resolvePrivateCapabilityServers,
+  validatePrivateCapabilityPack
+} from "./private-capability-pack.mjs";
 
 export const INSTANCE_CONFIG_FIELDS = Object.freeze([
+  "allowed_capabilities",
   "allowed_lark_domains",
   "authority_rules",
   "codex_bin",
@@ -19,9 +25,12 @@ export const INSTANCE_CONFIG_FIELDS = Object.freeze([
   "message_scope",
   "principal",
   "privacy",
+  "private_capability_packs",
   "production_data_approved",
   "production_enabled",
   "profile",
+  "public_web_search_approved",
+  "required_capabilities",
   "schedule",
   "schema_version",
   "supplement_lookback_minutes"
@@ -69,6 +78,7 @@ const SCHEDULE_FIELDS = new Set([
   "workday_end_hour",
   "workday_start_hour"
 ]);
+const PORTABLE_CAPABILITY_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 
 function rejectSecretFields(value, location = "config") {
   if (!value || typeof value !== "object") return;
@@ -112,6 +122,15 @@ function validateStringArray(value, name, { nonEmpty = false, unique = false } =
   if (unique && new Set(value).size !== value.length) {
     throw new TypeError(`${name} must not contain duplicate values`);
   }
+}
+
+function validateCapabilityIdentifiers(value, name) {
+  validateStringArray(value, name, { unique: true });
+  value.forEach((item, index) => {
+    if (!PORTABLE_CAPABILITY_ID.test(item)) {
+      throw new TypeError(`${name}[${index}] must be a portable identifier`);
+    }
+  });
 }
 
 function validateOptionalInteger(value, name, minimum, maximum) {
@@ -299,6 +318,41 @@ export function validateInstanceConfig(value) {
   if (typeof value.production_data_approved !== "boolean") {
     throw new TypeError("config.production_data_approved must be a boolean");
   }
+  if (
+    value.public_web_search_approved !== undefined &&
+    typeof value.public_web_search_approved !== "boolean"
+  ) {
+    throw new TypeError("config.public_web_search_approved must be a boolean");
+  }
+  if (value.private_capability_packs !== undefined) {
+    validateCapabilityIdentifiers(
+      value.private_capability_packs,
+      "config.private_capability_packs"
+    );
+    if (value.private_capability_packs.length > 0 && value.allowed_capabilities === undefined) {
+      throw new TypeError(
+        "config.allowed_capabilities is required when private capability packs are installed"
+      );
+    }
+  }
+  if (value.allowed_capabilities !== undefined) {
+    validateCapabilityIdentifiers(value.allowed_capabilities, "config.allowed_capabilities");
+  }
+  if (value.required_capabilities !== undefined) {
+    validateCapabilityIdentifiers(value.required_capabilities, "config.required_capabilities");
+    if (value.allowed_capabilities === undefined) {
+      throw new TypeError(
+        "config.allowed_capabilities is required when required capabilities are declared"
+      );
+    }
+    if (
+      value.required_capabilities.some((capability) => (
+        !value.allowed_capabilities.includes(capability)
+      ))
+    ) {
+      throw new TypeError("config.required_capabilities must be allowed locally");
+    }
+  }
   if (value.schema_version === 1) {
     if (value.control !== undefined) {
       throw new TypeError("config.control is not allowed in schema version 1");
@@ -377,4 +431,116 @@ export async function loadInstanceConfig(configPath) {
     throw error;
   }
   return validateInstanceConfig(value);
+}
+
+function ownedByCurrentUser(metadata) {
+  return typeof process.getuid !== "function" || metadata.uid === process.getuid();
+}
+
+async function requirePrivateDirectory(directory, label) {
+  const metadata = await lstat(directory);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+    throw new TypeError(`${label} must be a regular directory`);
+  }
+  if (!ownedByCurrentUser(metadata)) {
+    throw new TypeError(`${label} must be owned by the current user`);
+  }
+  if (process.platform !== "win32" && (metadata.mode & 0o077) !== 0) {
+    throw new TypeError(`${label} must not be accessible by group or other users`);
+  }
+}
+
+async function requirePrivateFile(filename, label) {
+  const metadata = await lstat(filename);
+  if (!metadata.isFile() || metadata.isSymbolicLink()) {
+    throw new TypeError(`${label} must be a regular file`);
+  }
+  if (!ownedByCurrentUser(metadata)) {
+    throw new TypeError(`${label} must be owned by the current user`);
+  }
+  if (process.platform !== "win32" && (metadata.mode & 0o077) !== 0) {
+    throw new TypeError(`${label} must not be accessible by group or other users`);
+  }
+}
+
+export function privateCapabilityRoot(configPath) {
+  if (typeof configPath !== "string" || !path.isAbsolute(configPath)) {
+    throw new TypeError("an absolute instance config path is required");
+  }
+  return path.join(path.dirname(configPath), "capabilities");
+}
+
+export async function loadPrivateCapabilityPack(packPath, {
+  expectedPackId
+} = {}) {
+  if (typeof packPath !== "string" || !path.isAbsolute(packPath)) {
+    throw new TypeError("an absolute private capability pack path is required");
+  }
+  await requirePrivateDirectory(path.dirname(packPath), "private capability pack directory");
+  await requirePrivateFile(packPath, "private capability pack");
+  let value;
+  try {
+    value = JSON.parse(await readFile(packPath, "utf8"));
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new TypeError("private capability pack must contain valid JSON");
+    }
+    throw error;
+  }
+  const pack = validatePrivateCapabilityPack(value);
+  if (expectedPackId !== undefined && pack.pack_id !== expectedPackId) {
+    throw new TypeError("private capability pack identifier does not match its installation ID");
+  }
+  return pack;
+}
+
+export async function loadPrivateCapabilityPacks(configPath, config) {
+  const packIds = config.private_capability_packs ?? [];
+  if (packIds.length === 0) return [];
+  const root = privateCapabilityRoot(configPath);
+  await requirePrivateDirectory(root, "private capability root");
+  return Promise.all(packIds.map((packId) => loadPrivateCapabilityPack(
+    path.join(root, `${packId}.json`),
+    { expectedPackId: packId }
+  )));
+}
+
+export async function loadPrivateCapabilityRegistry(configPath, config, {
+  resolveServer = async () => undefined
+} = {}) {
+  const packs = await loadPrivateCapabilityPacks(configPath, config);
+  const servers = await resolvePrivateCapabilityServers({ packs, resolveServer });
+  return {
+    packs,
+    servers,
+    ...compilePrivateCapabilityPacks({ packs, servers })
+  };
+}
+
+export function validateInstalledCapabilityPolicy(config, capabilities) {
+  if (!Array.isArray(capabilities)) throw new TypeError("capabilities must be an array");
+  const installedCapabilities = capabilities.map(({ capability }) => capability);
+  if (
+    installedCapabilities.some((capability) => typeof capability !== "string") ||
+    new Set(installedCapabilities).size !== installedCapabilities.length
+  ) {
+    throw new TypeError("installed capability identifiers must be unique strings");
+  }
+  const installed = new Set(installedCapabilities);
+  const allowedCapabilities = config.allowed_capabilities === undefined
+    ? installedCapabilities
+    : [...config.allowed_capabilities];
+  if (allowedCapabilities.some((capability) => !installed.has(capability))) {
+    throw new TypeError("a locally allowed capability is not installed");
+  }
+  const requiredCapabilities = [...(config.required_capabilities ?? [])];
+  const allowed = new Set(allowedCapabilities);
+  if (requiredCapabilities.some((capability) => !allowed.has(capability))) {
+    throw new TypeError("a required capability is not allowed locally");
+  }
+  return {
+    installed_capabilities: installedCapabilities,
+    allowed_capabilities: allowedCapabilities,
+    required_capabilities: requiredCapabilities
+  };
 }

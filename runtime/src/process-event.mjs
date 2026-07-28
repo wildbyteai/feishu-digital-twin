@@ -9,10 +9,12 @@ import {
   aiDecisionReasonCode,
   DECISION_REASON_CODES
 } from "./decision-diagnostics.mjs";
+import { validateCapabilityLookupRequest } from "./capability-gateway.mjs";
 const CONTROL_MESSAGES = new Map([
   ["立即冻结数字分身", { frozen: true, reason: "PRINCIPAL_REQUEST" }]
 ]);
 const RESUME_CONTROL_MESSAGE = "恢复数字分身";
+const HUMAN_CONTEXT_FALLBACK = "当前消息或引用内容无法读取，无法据此形成可靠结论，请人工检查原消息或链接后继续处理。";
 const AI_CONTEXT_LIMIT = 20;
 const AI_SIGNALS = new Set([
   "context_lookup_required",
@@ -49,6 +51,9 @@ function validateEvent(event) {
   }
   if (event.context !== undefined && !Array.isArray(event.context)) {
     throw new TypeError("event.context must be an array when present");
+  }
+  if (event.links !== undefined && !Array.isArray(event.links)) {
+    throw new TypeError("event.links must be an array when present");
   }
 }
 
@@ -107,6 +112,11 @@ function validateDecision(decision, event, { silent = false } = {}) {
       throw new TypeError("decision command confirmation is invalid");
     }
   }
+  const lookupRequests = decision.lookup_requests ?? [];
+  if (!Array.isArray(lookupRequests) || lookupRequests.length > 1) {
+    throw new TypeError("decision.lookup_requests cannot contain more than one query per round");
+  }
+  for (const request of lookupRequests) validateCapabilityLookupRequest(request);
   if (decision.outcome !== "ignore") {
     if (decision.response === null && silent) {
       // Trusted local system events never publish the model response.
@@ -145,6 +155,9 @@ function projectContextForAI(context, principal) {
     message_id: item?.message_id,
     sender_role: contextSenderRole(item, principal),
     content: item?.content,
+    links: Array.isArray(item?.links) ? structuredClone(item.links) : undefined,
+    link_only: item?.link_only === true ? true : undefined,
+    relation: item?.relation,
     topic_key: item?.topic_key,
     sent_at: item?.sent_at
   }));
@@ -193,8 +206,11 @@ export function projectEventForAI(event, intent) {
     update_time: event.update_time,
     message_type: event.message_type,
     text: event.text,
+    links: Array.isArray(event.links) ? structuredClone(event.links) : undefined,
+    link_only: event.link_only === true ? true : undefined,
     thread_id: event.thread_id,
     root_message_id: event.root_message_id,
+    parent_message_id: event.parent_message_id,
     reply_to_message_id: event.reply_to_message_id,
     is_external: event.is_external,
     signals: projectSignalsForAI(event.signals),
@@ -203,6 +219,9 @@ export function projectEventForAI(event, intent) {
     reply_retry: event.reply_retry === true ? true : undefined,
     execution_feedback: Array.isArray(event.execution_feedback)
       ? structuredClone(event.execution_feedback)
+      : undefined,
+    capability_feedback: Array.isArray(event.capability_feedback)
+      ? structuredClone(event.capability_feedback)
       : undefined,
     action_budget_remaining: Number.isInteger(event.action_budget_remaining)
       ? event.action_budget_remaining
@@ -248,6 +267,124 @@ function visibleResponse(response, principalName, { forceMode } = {}) {
   return { mode, text: `${authorityLabel(mode, principalName)}${body}${suffix}` };
 }
 
+function humanContextFallback(event, state, principalName) {
+  return {
+    event_id: event.event_id,
+    outcome: state.frozen === true ? "draft" : "reply",
+    reason: "referenced context is unreadable",
+    reason_code: DECISION_REASON_CODES.contextUnreadable,
+    response: visibleResponse({
+      mode: "suggestion",
+      text: HUMAN_CONTEXT_FALLBACK
+    }, principalName),
+    commands: [],
+    source_refs: [event.message_id],
+    executable_commands: [],
+    confirmation_commands: []
+  };
+}
+
+function providedLinks(event) {
+  return new Set([
+    ...(Array.isArray(event.links) ? event.links : []),
+    ...(event.context ?? []).flatMap((item) => Array.isArray(item?.links) ? item.links : [])
+  ].map(linkEvidenceKey).filter(Boolean));
+}
+
+function linkEvidenceKey(value) {
+  if (typeof value !== "string" || value.length === 0) return null;
+  try {
+    const url = new URL(value);
+    if (!new Set(["http:", "https:"]).has(url.protocol)) return value;
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return value;
+  }
+}
+
+function hasReadableFeedbackValue(value) {
+  if (typeof value === "string") return value.trim().length > 0;
+  if (typeof value === "number" || typeof value === "boolean") return true;
+  if (Array.isArray(value)) return value.some(hasReadableFeedbackValue);
+  if (value && typeof value === "object") {
+    return Object.values(value).some(hasReadableFeedbackValue);
+  }
+  return false;
+}
+
+function feedbackSourceLinks(data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return [];
+  return [
+    data.source_url,
+    data.source_link,
+    ...(Array.isArray(data.source_urls) ? data.source_urls : []),
+    ...(Array.isArray(data.source_links) ? data.source_links : []),
+    data.url,
+    data.document?.source_url,
+    data.document?.source_link,
+    data.document?.url
+  ].filter((value) => typeof value === "string" && /^https?:\/\//u.test(value));
+}
+
+function hasReadableLinkedContent(data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return false;
+  return [
+    data.content,
+    data.text,
+    data.body,
+    data.records,
+    data.rows,
+    data.values,
+    data.document?.content,
+    data.document?.text,
+    data.document?.body
+  ].some(hasReadableFeedbackValue);
+}
+
+function hasReadableExecutionEvidence(event, links) {
+  return (event.execution_feedback ?? []).some((item) => {
+    if (item?.result?.status !== "complete") return false;
+    const operation = item.command?.operation ?? item.command?.argv?.[1] ?? "";
+    if (!/(?:fetch|get|inspect|list|read|search)/u.test(operation)) return false;
+    const data = item.result.data;
+    return hasReadableLinkedContent(data) &&
+      feedbackSourceLinks(data).some((link) => links.has(linkEvidenceKey(link)));
+  });
+}
+
+function hasReadableCapabilityEvidence(event, links) {
+  return (event.capability_feedback ?? []).some((item) => {
+    const result = item?.result;
+    return result?.status === "complete" &&
+      hasReadableFeedbackValue(result.data) &&
+      (result.source_refs ?? []).some((sourceRef) => links.has(linkEvidenceKey(sourceRef)));
+  });
+}
+
+function isLinkIndependentAcknowledgement(decision) {
+  if (typeof decision.response?.text !== "string") return false;
+  const text = decision.response.text
+    .normalize("NFKC")
+    .replaceAll(/\s+/gu, "")
+    .replace(/[。！!，,.]+$/u, "");
+  return /^(?:好(?:的)?|收到|已收到|了解|知悉|明白|谢谢|感谢|ok|okay|gotit|received|acknowledged)$/iu.test(text);
+}
+
+function requiresLinkFallback(event, decision) {
+  const links = providedLinks(event);
+  return links.size > 0 &&
+    !isLinkIndependentAcknowledgement(decision) &&
+    !hasReadableExecutionEvidence(event, links) &&
+    !hasReadableCapabilityEvidence(event, links) &&
+    decision.outcome !== "ignore" &&
+    decision.commands.length === 0 &&
+    (decision.lookup_requests ?? []).length === 0;
+}
+
 function finish(runtimeState, eventId, result) {
   if (typeof runtimeState?.completeEvent === "function") {
     if (!runtimeState.completeEvent(eventId)) {
@@ -266,7 +403,12 @@ export function classifyCandidate(event) {
   return { candidate: false, reasonCode: "NO_TEXT_OR_SIGNAL" };
 }
 
-export async function processEvent(event, { config, runtimeState, runCodex } = {}) {
+export async function processEvent(event, {
+  config,
+  runtimeState,
+  runCodex,
+  capabilitySnapshot
+} = {}) {
   validateEvent(event);
   validateConfig(config);
   if (typeof runCodex !== "function") throw new TypeError("runCodex must be a function");
@@ -348,14 +490,34 @@ export async function processEvent(event, { config, runtimeState, runCodex } = {
     }
 
     const state = runtimeState?.getRuntimeState?.() ?? { frozen: false };
+    if (
+      candidateEvent.signals?.context_unreadable === true ||
+      candidateEvent.signals?.content_unreadable === true
+    ) {
+      return finish(runtimeState, event.event_id, humanContextFallback(
+        event,
+        state,
+        config.principal.name
+      ));
+    }
     const projectionIntent = aiProjectionIntent(dailyMemoryIntent, config.principal);
     const decision = validateDecision(await runCodex(
       projectEventForAI(candidateEvent, projectionIntent),
-      {
+      definedEntries({
         config: projectConfigForAI(config, candidateEvent, projectionIntent),
+        capabilities: capabilitySnapshot === undefined
+          ? undefined
+          : structuredClone(capabilitySnapshot),
         runtime: { frozen: state.frozen === true }
-      }
+      })
     ), candidateEvent, { silent: dailyMemoryIntent !== null });
+    if (requiresLinkFallback(candidateEvent, decision)) {
+      return finish(runtimeState, event.event_id, humanContextFallback(
+        event,
+        state,
+        config.principal.name
+      ));
+    }
     if (decision.outcome === "ignore") {
       return finish(runtimeState, event.event_id, {
         ...decision,

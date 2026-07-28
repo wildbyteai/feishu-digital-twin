@@ -18,6 +18,15 @@ const REQUIRED_DOCUMENTS = Object.freeze([
   "docs/reference/feishu-permissions.md",
   "docs/security/privacy.md"
 ]);
+const CAPABILITY_DOCUMENTS = Object.freeze([
+  "docs/adr/0007-capability-gateway-and-declarative-packs.md",
+  "docs/features/business-capabilities.en.md",
+  "docs/features/business-capabilities.md"
+]);
+const PUBLISHED_DOCUMENTS = Object.freeze([
+  ...REQUIRED_DOCUMENTS,
+  ...CAPABILITY_DOCUMENTS
+]);
 
 function read(relativePath) {
   return readFileSync(path.join(projectRoot, relativePath), "utf8");
@@ -38,7 +47,7 @@ test("公开上手、配置、运行和隐私文档纳入源码、公共快照�
   const packaged = new Set(packageManifest.files);
   const publicFiles = new Set(publicSnapshot.files.map((entry) => entry.path));
 
-  for (const relativePath of REQUIRED_DOCUMENTS) {
+  for (const relativePath of PUBLISHED_DOCUMENTS) {
     const metadata = lstatSync(path.join(projectRoot, relativePath));
     assert.equal(metadata.isFile(), true, relativePath);
     assert.equal(metadata.isSymbolicLink(), false, relativePath);
@@ -194,7 +203,7 @@ test("根 README 只用三个主步骤引导真实安装并链接全部详细指
 test("公开文档中的本地 Markdown 链接均留在发行树内并可读取", () => {
   const packageManifest = JSON.parse(read("package.json"));
   const packaged = new Set(packageManifest.files);
-  for (const sourcePath of [...ROOT_READMES, ...REQUIRED_DOCUMENTS]) {
+  for (const sourcePath of [...ROOT_READMES, ...PUBLISHED_DOCUMENTS]) {
     const sourceDirectory = path.dirname(sourcePath);
     for (const target of markdownLinks(read(sourcePath))) {
       const pathname = decodeURIComponent(target.split("#", 1)[0]);
@@ -226,6 +235,46 @@ test("配置参考逐项说明来源、敏感性、验证和安全回退", () =>
   for (const field of Object.keys(schema.properties)) {
     assert.equal(content.includes(`\`${field}\``), true, field);
   }
+});
+
+test("中英文公共能力文档说明完整契约、授权收紧、撤销和人工兜底", () => {
+  const chinese = read("docs/features/business-capabilities.md");
+  const english = read("docs/features/business-capabilities.en.md");
+  const adr = read("docs/adr/0007-capability-gateway-and-declarative-packs.md");
+  const compatibility = read("docs/compatibility.md");
+
+  assert.match(adr, /status:\s*accepted/u);
+  assert.match(adr, /CapabilityGateway/u);
+  assert.match(adr, /业务决策 Codex.*离线/su);
+  assert.match(adr, /声明式私有能力包/u);
+  assert.match(adr, /public.*internal|公开.*内部/iu);
+
+  for (const content of [chinese, english]) {
+    assert.match(content, /CapabilityGateway/u);
+    assert.match(content, /Web Search Adapter/u);
+    assert.match(content, /MCP Adapter/u);
+    assert.match(content, /resolveCapabilityServer/u);
+    assert.match(content, /unavailable/u);
+    assert.match(content, /FakeCapabilityAdapter/u);
+    assert.match(content, /capability-pack\.schema\.json/u);
+    assert.match(content, /--capability-pack/u);
+    assert.match(content, /--approve-capability-trust-zone internal/u);
+    assert.match(content, /private_capability_packs/u);
+    assert.match(content, /allowed_capabilities/u);
+    assert.match(content, /required_capabilities/u);
+    assert.match(content, /public_web_search_approved/u);
+    assert.match(content, /doctor/u);
+    assert.match(content, /config update --config/u);
+    assert.match(content, /human-fallback/u);
+    assert.match(content, /example\.records/u);
+    assert.doesNotMatch(content, /file:\/\/|\/(?:Users|home)\/|localhost/iu);
+  }
+
+  assert.match(compatibility, /private_capability_packs/u);
+  assert.match(compatibility, /allowed_capabilities/u);
+  assert.match(compatibility, /required_capabilities/u);
+  assert.match(compatibility, /capability pack.*schema_version.*1/iu);
+  assert.match(compatibility, /旧配置.*空能力集合|older configurations.*empty capability set/iu);
 });
 
 test("公开接入文档固定官方组件、Codex 黑盒和数据防泄漏边界", () => {

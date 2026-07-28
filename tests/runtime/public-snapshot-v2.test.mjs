@@ -135,6 +135,9 @@ function writeSyntheticInstanceConfig(root, { controlMode = "local" } = {}) {
     profile: "orchid-operator-private",
     message_scope: "bot_only",
     production_data_approved: false,
+    private_capability_packs: ["orchid.records"],
+    allowed_capabilities: ["orchid.records.read"],
+    required_capabilities: [],
     control: controlMode === "base"
       ? { mode: "base" }
       : { mode: "local", enabled: false },
@@ -381,6 +384,7 @@ test("公共快照从 Git 外实例配置派生私有禁止值并且不在输出
   const canaries = [
     { value: instanceConfig.instance_id, configPath },
     { value: instanceConfig.profile, configPath },
+    { value: instanceConfig.private_capability_packs[0], configPath },
     { value: instanceConfig.principal.name, configPath },
     { value: instanceConfig.principal.open_id, configPath },
     { value: instanceConfig.principal.address_names[0], configPath },
@@ -468,6 +472,105 @@ test("公共快照从 Git 外实例配置派生私有禁止值并且不在输出
   }
   assert.doesNotMatch(publicEvidence, new RegExp(configPath, "u"));
   assert.doesNotMatch(publicEvidence, new RegExp(baseConfigPath, "u"));
+});
+
+test("私有扫描策略按类别阻止组织、能力包、MCP server、工具、域名、路径和凭据", async () => {
+  const policy = {
+    schema_version: 1,
+    forbidden_literals: ["Private Person"],
+    organization_identifiers: ["Orchid Holdings"],
+    private_capability_pack_ids: ["orchid.records"],
+    private_domains: [["records", "orchid", "internal"].join(".")],
+    private_mcp_server_refs: ["orchid-records-server"],
+    private_tool_names: ["records.private.get"]
+  };
+  const canaries = [
+    ["organization", "Orchid Holdings", "forbidden-literal"],
+    ["capability-pack", "orchid.records", "forbidden-literal"],
+    ["mcp-server", "orchid-records-server", "forbidden-literal"],
+    ["tool", "records.private.get", "forbidden-literal"],
+    [
+      "domain",
+      ["https://records", "orchid", "internal/item"].join("."),
+      "private-domain"
+    ],
+    [
+      "local-path",
+      ["", "Users", "fixture-user", "private-capability.json"].join("/"),
+      "absolute-local-path"
+    ],
+    [
+      "credential",
+      ["Authorization", ": Bearer ", "A1b2C3d4E5f6G7h8I9j0K1l2"].join(""),
+      "known-secret-shape"
+    ]
+  ];
+
+  for (const [name, value, code] of canaries) {
+    const report = await scanPublicBuffers({
+      files: [{ path: `fixtures/${name}.txt`, content: Buffer.from(value) }],
+      policy,
+      stage: "distribution-boundary"
+    });
+    assert.equal(report.findings.some((finding) => finding.code === code), true, name);
+  }
+});
+
+test("私有扫描策略同样阻止组织、能力包、MCP server、工具和域名进入发行路径", async () => {
+  const policy = {
+    schema_version: 1,
+    forbidden_literals: ["Private Person"],
+    organization_identifiers: ["Orchid Holdings"],
+    private_capability_pack_ids: ["orchid.records"],
+    private_domains: [["records", "orchid", "internal"].join(".")],
+    private_mcp_server_refs: ["orchid-records-server"],
+    private_tool_names: ["records.private.get"]
+  };
+  const canaries = [
+    ["Orchid Holdings", "forbidden-literal"],
+    ["orchid.records", "forbidden-literal"],
+    ["orchid-records-server", "forbidden-literal"],
+    ["records.private.get", "forbidden-literal"],
+    [["records", "orchid", "internal"].join("."), "private-domain"]
+  ];
+
+  for (const [value, code] of canaries) {
+    const relativePath = `fixtures/${value}.txt`;
+    const report = await scanPublicBuffers({
+      files: [{ path: relativePath, content: Buffer.from("neutral fixture") }],
+      policy,
+      stage: "distribution-path-boundary"
+    });
+    assert.equal(
+      report.findings.some((finding) => (
+        finding.code === code && finding.path === "<private-path>"
+      )),
+      true,
+      relativePath
+    );
+    assert.doesNotMatch(JSON.stringify(report), new RegExp(value, "u"));
+  }
+
+  const duplicateValue = "orchid.records";
+  const duplicatePath = `fixtures/${duplicateValue}.txt`;
+  const duplicateReport = await scanPublicBuffers({
+    files: [{ path: duplicatePath, content: Buffer.from(duplicateValue) }],
+    policy,
+    stage: "distribution-path-boundary"
+  });
+  assert.deepEqual(duplicateReport.findings, [
+    { code: "forbidden-literal", path: "<private-path>" }
+  ]);
+
+  const failedReadReport = await scanPublicBuffers({
+    files: [{ path: duplicatePath, content: "not a buffer" }],
+    policy,
+    stage: "distribution-path-boundary"
+  });
+  assert.deepEqual(failedReadReport.findings, [
+    { code: "file-read-failed", path: "<private-path>" }
+  ]);
+  assert.doesNotMatch(JSON.stringify(failedReadReport), new RegExp(duplicateValue, "u"));
 });
 
 test("未明确标注的普通短资源名不会被提升为私有身份禁词", () => {

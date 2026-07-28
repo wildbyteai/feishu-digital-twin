@@ -32,6 +32,7 @@ This is neither a conventional mention-only Bot nor a hosted SaaS. Every automat
 | Dual-identity replies | Messages sent to the Bot are answered by the Bot; messages sent to the principal user are answered with the principal user's identity. The model cannot switch identities by itself. |
 | AI decisions and execution | Codex, Skills, and natural-language rules decide when to engage, what to say, when to request confirmation, and which actions to run. |
 | Feishu work execution | Uses the official `lark-cli` for messages, tasks, calendars, documents, Base, Drive, Wiki, and related capabilities. |
+| On-demand business lookup | Retrieves bounded evidence through public Web Search or an explicitly installed declarative private capability pack while the business-decision Codex session remains offline. |
 | Base control console | Required for a complete installation. Reuse an existing Base or let `setup` create two tables for the master switch, natural-language rules, group-specific rules, and knowledge routing. |
 | Enterprise knowledge | Classifies the direction of a conversation and retrieves relevant content from configured enterprise knowledge spaces before replying. |
 | Daily work memory | Summarizes the day's chats, tasks, calendar events, and execution results into a designated Feishu Drive folder. |
@@ -118,6 +119,8 @@ Feishu permissions have three layers: the application's **Bot scopes**, the prin
 | Base control console | `console` (automatically included for normal setup) | `base` | User | Read access when reusing a Base; Base creation, table creation, and initial-record write access when provisioning automatically |
 
 New instances default to `message_scope=bot_only` and at least the `im,base` local domains; `base` is reserved for the mandatory control console. Do not request `all` by default, and do not request organization-management or member-management permissions unrelated to the selected capabilities.
+
+Web Search and private MCP reads do not use `--capabilities` to request a Feishu domain. They are governed by `public_web_search_approved` and `private_capability_packs` / `allowed_capabilities`, with separate trust-zone approval. See [pluggable business capabilities](./docs/features/business-capabilities.en.md) for installation, Doctor, narrowing, revocation, and human fallback.
 
 Exact scope names can evolve with the Feishu Open Platform and `lark-cli`. Use the current CLI to obtain the authoritative list:
 
@@ -243,6 +246,7 @@ See [runtime operations](./docs/operations/runtime.md) for details. Uninstall ke
 - Do not copy another person's `lark-cli` profile, Keychain, Codex login state, resource IDs, or instance configuration.
 - The project has no remote telemetry by default and does not upload diagnostic bundles. Runtime logs do not retain message bodies, full model output, or credentials, and the project does not build long-term chat history. Pending confirmation keeps only the minimum action addressing for up to ten minutes and clears it after approval, rejection, or expiry.
 - `allowed_lark_domains` is a local ceiling that cannot be exceeded. The Base console can only narrow it.
+- `allowed_capabilities` is the local ceiling for Web/MCP semantic capabilities. Base may only intersect it, and the business-decision Codex session cannot access Web, MCP, local files, or credentials directly.
 - Trusted runtime code enforces reply identity, the `🤖` disclosure mark, freezing, deduplication, supplemental-read cursors, and the ownership-transfer prohibition.
 - Existing Base resources are always verified read-only. Only an explicit `--create-missing-resources` allows the official CLI to create or complete a missing Base, control table, initial record, Wiki space, or Drive daily-memory folder.
 
@@ -282,6 +286,7 @@ The project does not rebuild a Feishu SDK, model SDK, action catalog, approval s
 - [Compatibility](./docs/compatibility.md)
 - [Daily work memory](./docs/features/daily-memory.md)
 - [Enterprise knowledge-assisted replies](./docs/features/enterprise-knowledge.md)
+- [Pluggable business capabilities](./docs/features/business-capabilities.en.md)
 - [Base control console](./docs/feishu-console.md)
 - [Local service continuity](./docs/operations/local-service-continuity.md)
 - [Public snapshot and privacy gate](./docs/operations/public-snapshot.md)

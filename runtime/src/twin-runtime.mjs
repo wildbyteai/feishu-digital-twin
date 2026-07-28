@@ -1,5 +1,29 @@
 import { TwinService } from "./service.mjs";
 
+function capabilityGatewayForConfig(gateway, config) {
+  if (gateway === undefined || !Array.isArray(config.allowed_capabilities)) return gateway;
+  const allowed = new Set(config.allowed_capabilities);
+  return {
+    snapshot() {
+      return gateway.snapshot().filter(({ capability }) => allowed.has(capability));
+    },
+    async lookup(request, trustedContext) {
+      if (!allowed.has(request?.capability)) {
+        return {
+          capability: typeof request?.capability === "string" && request.capability.length > 0
+            ? request.capability
+            : "unknown",
+          operation: typeof request?.operation === "string" && request.operation.length > 0
+            ? request.operation
+            : "unknown",
+          status: "unavailable"
+        };
+      }
+      return gateway.lookup(request, trustedContext);
+    }
+  };
+}
+
 export class TwinRuntime {
   constructor({
     inferenceAdapter,
@@ -33,6 +57,10 @@ export class TwinRuntime {
       ...this.serviceOptions,
       config,
       guard,
+      capabilityGateway: capabilityGatewayForConfig(
+        this.serviceOptions.capabilityGateway,
+        config
+      ),
       ...(this.usesRuntimeSnapshots
         ? { refreshProductionEnabled: async () => config.production_enabled === true }
         : {}),

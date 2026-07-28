@@ -61,8 +61,10 @@ test("普通消息只把决策所需的最小事件、角色上下文和当前�
     update_time: "2026-07-24T09:01:00.000Z",
     message_type: "text",
     text: "请确认库存后给客户答复。",
+    links: ["https://example.invalid/current"],
     thread_id: "omt_projection",
     root_message_id: "om_root_projection",
+    parent_message_id: "om_parent_projection",
     reply_to_message_id: "om_parent_projection",
     is_external: true,
     tenant_key: PRIVATE_CANARY,
@@ -76,6 +78,8 @@ test("普通消息只把决策所需的最小事件、角色上下文和当前�
         message_id: "om_context_principal",
         sender_open_id: config.principal.open_id,
         content: "我先核对库存。",
+        links: ["https://example.invalid/workflow"],
+        relation: "reply",
         chat_id: `oc_context_${PRIVATE_CANARY}`,
         topic_key: "omt_projection",
         sent_at: "2026-07-24T08:57:00.000Z"
@@ -136,8 +140,10 @@ test("普通消息只把决策所需的最小事件、角色上下文和当前�
     update_time: "2026-07-24T09:01:00.000Z",
     message_type: "text",
     text: "请确认库存后给客户答复。",
+    links: ["https://example.invalid/current"],
     thread_id: "omt_projection",
     root_message_id: "om_root_projection",
+    parent_message_id: "om_parent_projection",
     reply_to_message_id: "om_parent_projection",
     is_external: true,
     signals: {
@@ -149,6 +155,8 @@ test("普通消息只把决策所需的最小事件、角色上下文和当前�
         message_id: "om_context_principal",
         sender_role: "principal",
         content: "我先核对库存。",
+        links: ["https://example.invalid/workflow"],
+        relation: "reply",
         topic_key: "omt_projection",
         sent_at: "2026-07-24T08:57:00.000Z"
       },
@@ -200,6 +208,8 @@ test("普通消息只把决策所需的最小事件、角色上下文和当前�
   assert.equal(prompt.includes('"sender_role": "principal"'), true);
   assert.equal(prompt.includes('"sender_role": "digital_twin"'), true);
   assert.equal(prompt.includes('"sender_role": "participant"'), true);
+  assert.equal(prompt.includes('"https://example.invalid/workflow"'), true);
+  assert.match(prompt, /已有链接[^\n]*不要[^\n]*(?:再次|重新)[^\n]*索要/u);
 });
 
 test("可信日报意图只额外公开目标日期和日报目标，不公开隐私排除项", async () => {

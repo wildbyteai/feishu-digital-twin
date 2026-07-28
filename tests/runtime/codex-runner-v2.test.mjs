@@ -90,6 +90,30 @@ test("Codex 使用官方 ephemeral、read-only 和 output-schema 运行项目 Sk
   }
 });
 
+test("公共 Web Search 使用不含 Skill 的隔离会话且必须实际调用搜索", async () => {
+  const isolationRoot = mkdtempSync(path.join(tmpdir(), "twin-public-search-runtime-"));
+  try {
+    installLarkSkill(isolationRoot);
+    const decision = await runCodexDecision({
+      event_id: "evt_public_web_search",
+      source: "system",
+      message_id: "om_public_web_search",
+      text: "approved public Web Search query"
+    }, {
+      codexBin: fakeCodex,
+      isolationRoot,
+      timeoutMs: 5000,
+      publicSearchQuery: "OpenAI Codex CLI 最新稳定版本"
+    });
+
+    assert.equal(decision.outcome, "reply");
+    assert.equal(decision.response.mode, "suggestion");
+    assert.deepEqual(decision.source_refs, ["https://developers.example.invalid/codex"]);
+  } finally {
+    rmSync(isolationRoot, { recursive: true, force: true });
+  }
+});
+
 test("隔离运行环境未安装官方 lark Skills 时拒绝启动", async () => {
   const isolationRoot = mkdtempSync(path.join(tmpdir(), "twin-codex-no-lark-skills-"));
   try {
