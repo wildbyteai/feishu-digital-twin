@@ -72,7 +72,12 @@ function validateConfig(config) {
 function availableSourceRefs(event) {
   return new Set([
     event.message_id,
-    ...(event.context ?? []).map((item) => item?.message_id).filter(Boolean)
+    ...(event.context ?? []).map((item) => item?.message_id).filter(Boolean),
+    ...(event.capability_feedback ?? []).flatMap((item) => (
+      item?.result?.status === "complete" && Array.isArray(item.result.source_refs)
+        ? item.result.source_refs
+        : []
+    ))
   ]);
 }
 

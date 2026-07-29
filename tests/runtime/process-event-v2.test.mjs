@@ -624,3 +624,33 @@ test("查询来源链接移除 query 和 fragment 后仍可关联原始链接", 
   assert.equal(result.reason, "需要回应");
   assert.equal(result.response.text, "🤖【数字分身】该流程需要人工审批。");
 });
+
+test("最终回复不能引用本轮能力结果之外的来源链接", async () => {
+  await assert.rejects(processEvent(event({
+    event_id: "evt-untrusted-capability-source",
+    message_id: "om-untrusted-capability-source",
+    capability_feedback: [{
+      round: 1,
+      request: {
+        capability: "fixture.workflow.read",
+        operation: "get",
+        input: { workflow_id: "fixture-42" },
+        reason: "读取流程正文"
+      },
+      result: {
+        capability: "fixture.workflow.read",
+        operation: "get",
+        status: "complete",
+        data: { content: "流程要求由人工审批。" },
+        source_refs: ["https://example.invalid/workflow"]
+      }
+    }]
+  }), {
+    config: config(),
+    runtimeState: { getRuntimeState: () => ({ frozen: false }) },
+    runCodex: async (input) => decision({
+      event_id: input.event_id,
+      source_refs: ["https://example.invalid/invented"]
+    })
+  }), /decision\.source_refs contains an unavailable source/u);
+});

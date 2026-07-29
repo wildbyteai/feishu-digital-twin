@@ -215,7 +215,7 @@ test("当前消息链接查询缺少 Adapter 来源时补充来源并形成最�
           response: { mode: "representative", text: "流程目前处于待处理状态。" },
           commands: [],
           lookup_requests: [],
-          source_refs: [input.message_id]
+          source_refs: [input.capability_feedback[0].result.source_refs[0]]
         };
       }
     });
