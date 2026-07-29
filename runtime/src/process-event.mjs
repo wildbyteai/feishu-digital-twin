@@ -132,8 +132,11 @@ function validateDecision(decision, event, { silent = false } = {}) {
   for (const request of lookupRequests) validateCapabilityLookupRequest(request);
   for (const request of actionRequests) validateCapabilityLookupRequest(request);
   if (decision.outcome !== "ignore") {
-    if (decision.response === null && silent) {
-      // Trusted local system events never publish the model response.
+    if (
+      decision.response === null &&
+      (silent || lookupRequests.length > 0)
+    ) {
+      // Trusted system events and intermediate capability rounds do not publish this response.
     } else {
       if (!decision.response || !RESPONSE_MODES.has(decision.response.mode)) {
         throw new TypeError("decision.response.mode is invalid");

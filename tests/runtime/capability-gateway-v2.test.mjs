@@ -190,7 +190,7 @@ test("当前消息链接查询缺少 Adapter 来源时补充来源并形成最�
             event_id: input.event_id,
             outcome: "reply",
             reason: "需要先核实流程状态",
-            response: { mode: "representative", text: "我先核实流程。" },
+            response: null,
             commands: [],
             lookup_requests: [{
               capability: "fixture.workflow.read",
