@@ -129,6 +129,35 @@ test("AI 公开 send/reply 由 Guard 自动注入统一助理标识", () => {
   );
 });
 
+test("Guard 收到当前助理标识时不会在真实执行链路再次添加", async () => {
+  const calls = [];
+  const guard = guardWithRunner(async (argv) => {
+    calls.push(argv);
+    return {
+      exit_code: 0,
+      stdout: JSON.stringify({ ok: true, data: {} }),
+      stderr: ""
+    };
+  });
+  const result = await guard.execute({
+    argv: [
+      "im",
+      "+messages-reply",
+      "--message-id",
+      "om_x",
+      "--text",
+      "🤖 AI助理：我来处理"
+    ]
+  }, { productionEnabled: true, frozen: false });
+
+  assert.equal(result.status, "complete");
+  assert.equal(calls.length, 2);
+  assert.equal(
+    calls[1][calls[1].indexOf("--text") + 1],
+    "🤖 AI助理：我来处理"
+  );
+});
+
 test("Guard 把错误主体和重复权威标签归一化为一个可信标签", () => {
   const guard = guardWithRunner(async () => ({ exit_code: 0, stdout: "{}", stderr: "" }));
   const plan = guard.plan({
@@ -138,7 +167,7 @@ test("Guard 把错误主体和重复权威标签归一化为一个可信标签",
       "--message-id",
       "om_x",
       "--text",
-      "🤖【待错误主体确认】🤖【数字分身】请确认调整日期。"
+      "🤖【待错误主体确认】🤖 【数字分身】请确认调整日期。"
     ]
   }, { productionEnabled: true, frozen: false });
 

@@ -3,7 +3,8 @@ import { createHash } from "node:crypto";
 
 import {
   authorityLabel,
-  hasAuthorityLabel
+  hasAuthorityLabel,
+  stripAuthorityLabel
 } from "../../shared/authority-labels.mjs";
 import { buildLarkEnvironment } from "../../shared/subprocess-environment.mjs";
 
@@ -172,17 +173,21 @@ function messageText(argv) {
 const AUTHORITY_PREFIX = /^(?:🤖\s*)*【(数字分身|代表发言|建议|待[^】]+确认)】\s*/u;
 
 function normalizeMessageText(text, principalName) {
-  let body = text.trim();
-  const first = AUTHORITY_PREFIX.exec(body);
+  const original = text.trim();
+  const first = AUTHORITY_PREFIX.exec(original);
   const mode = first?.[1] === "建议"
     ? "suggestion"
     : first?.[1]?.startsWith("待")
       ? "confirmation"
       : "representative";
-  while (AUTHORITY_PREFIX.test(body)) {
+  let body = original;
+  while (true) {
+    const previous = body;
+    body = stripAuthorityLabel(body);
     body = body.replace(AUTHORITY_PREFIX, "").trimStart();
+    body = body.replace(/^(?:🤖\s*)+/u, "").trimStart();
+    if (body === previous) break;
   }
-  body = body.replace(/^(?:🤖\s*)+/u, "").trimStart();
   return `${authorityLabel(mode, principalName)}${body}`;
 }
 
