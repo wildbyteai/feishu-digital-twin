@@ -377,7 +377,7 @@ test("父消息已有内部流程链接时原会话直接使用该链接而不�
     assert.equal(result.diagnostics.context_count, 1);
     assert.equal(
       result.response.text,
-      "🤖【建议】当前消息或引用内容无法读取，无法据此形成可靠结论，请人工检查原消息或链接后继续处理。"
+      "🤖 AI助理：当前消息或引用内容无法读取，无法据此形成可靠结论，请人工检查原消息或链接后继续处理。"
     );
     assert.doesNotMatch(result.response.text, /重新|再发|提供.*链接/u);
     assert.equal(calls.some((argv) => (
@@ -443,7 +443,7 @@ test("回复载荷确实不可读时原会话确定性建议人工处理且不�
     assert.equal(result.diagnostics.decision_reason_code, "CONTEXT_UNREADABLE");
     assert.equal(
       result.response.text,
-      "🤖【建议】当前消息或引用内容无法读取，无法据此形成可靠结论，请人工检查原消息或链接后继续处理。"
+      "🤖 AI助理：当前消息或引用内容无法读取，无法据此形成可靠结论，请人工检查原消息或链接后继续处理。"
     );
     assert.equal(calls.some((argv) => argv.includes("+messages-reply")), true);
   } finally {
@@ -1300,7 +1300,7 @@ test("官方 CLI 结果会交回 AI，完成多步动作后再发送最终回复
       text: "帮我约张总开会"
     }));
     assert.equal(decisions, 3);
-    assert.equal(result.response.text, "🤖【数字分身】日程已经创建好了。");
+    assert.equal(result.response.text, "🤖 AI助理：日程已经创建好了。");
     assert.equal(calls.filter((argv) => argv.includes("contact") && !argv.includes("--dry-run")).length, 1);
     assert.equal(calls.filter((argv) => argv.includes("calendar") && !argv.includes("--dry-run")).length, 1);
   } finally {
@@ -1347,7 +1347,7 @@ test("AI 动作反馈循环达到上限后停止继续执行", async () => {
     const result = await service.handle(event({ event_id: "evt-bounded", message_id: "om-bounded" }));
     assert.equal(decisions, 3);
     assert.equal(calls.filter((argv) => argv.includes("task") && !argv.includes("--dry-run")).length, 2);
-    assert.equal(result.response.text.startsWith("🤖【建议】"), true);
+    assert.equal(result.response.text.startsWith("🤖 AI助理："), true);
   } finally {
     runtimeState.close();
   }
@@ -1494,6 +1494,9 @@ test("语义业务动作必须经过准备、本人确认和单次提交", async
     const requested = await service.handle(event({
       event_id: "evt-capability-action",
       message_id: "om-capability-action",
+      chat_id: "oc-principal-bot-p2p",
+      chat_type: "p2p",
+      sender_open_id: "ou_principal",
       text: "请同意这条审批"
     }));
     assert.equal(prepareCalls, 1);
@@ -1545,6 +1548,9 @@ test("语义业务动作必须经过准备、本人确认和单次提交", async
     const blockedRequest = await service.handle(event({
       event_id: "evt-capability-action-frozen",
       message_id: "om-capability-action-frozen",
+      chat_id: "oc-principal-bot-p2p",
+      chat_type: "p2p",
+      sender_open_id: "ou_principal",
       text: "请再准备一条审批"
     }));
     const blockedConfirmationId = blockedRequest.confirmations[0].confirmation_id;

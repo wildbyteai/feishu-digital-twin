@@ -1,20 +1,19 @@
 export const RESPONSE_MODES = new Set(["representative", "suggestion", "confirmation"]);
 
-const LEGACY_REPRESENTATIVE_LABEL = "🤖【代表发言】";
+const AI_ASSISTANT_LABEL = "🤖 AI助理：";
+const LEGACY_AUTHORITY_LABEL = /^🤖【(?:数字分身|代表发言|建议|待[^】]+确认)】/u;
 
 export function authorityLabel(mode, principalName) {
-  if (mode === "representative") return "🤖【数字分身】";
-  if (mode === "suggestion") return "🤖【建议】";
-  if (mode === "confirmation" && typeof principalName === "string" && principalName.length > 0) {
-    return `🤖【待${principalName}确认】`;
-  }
-  throw new TypeError("authority label mode or principal name is invalid");
+  if (!RESPONSE_MODES.has(mode)) throw new TypeError("authority label mode is invalid");
+  return AI_ASSISTANT_LABEL;
 }
 
 export function stripAuthorityLabel(text) {
   let result = text.trim();
-  while (/^🤖【(?:数字分身|代表发言|建议|待[^】]+确认)】/u.test(result)) {
-    result = result.replace(/^🤖【(?:数字分身|代表发言|建议|待[^】]+确认)】/u, "").trimStart();
+  while (result.startsWith(AI_ASSISTANT_LABEL) || LEGACY_AUTHORITY_LABEL.test(result)) {
+    result = result.startsWith(AI_ASSISTANT_LABEL)
+      ? result.slice(AI_ASSISTANT_LABEL.length).trimStart()
+      : result.replace(LEGACY_AUTHORITY_LABEL, "").trimStart();
   }
   return result;
 }
@@ -29,6 +28,6 @@ export function hasAuthorityLabel(text, principalName) {
 
 export function hasCurrentOrLegacyAuthorityLabel(text, principalName) {
   return hasAuthorityLabel(text, principalName) || (
-    typeof text === "string" && text.startsWith(LEGACY_REPRESENTATIVE_LABEL)
+    typeof text === "string" && LEGACY_AUTHORITY_LABEL.test(text)
   );
 }

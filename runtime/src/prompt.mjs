@@ -17,7 +17,7 @@ export function buildDecisionPrompt(event, promptContext = {}) {
     ? [skill, dailyMemorySkill]
     : [skill];
   return [
-    "你是一个临时运行的飞书数字分身决策器。",
+    "你是一个临时运行的飞书 AI 助理决策器。",
     "只使用下面给出的项目 Skill、配置、当前消息、同源上下文和隔离 HOME 中已安装的官方 lark-* Skills。",
     "按需读取匹配的官方 lark-* SKILL.md 来选择准确命令；不要执行命令、访问网络或输出 Markdown。",
     "严格返回一个符合输出 Schema 的 JSON 对象。",

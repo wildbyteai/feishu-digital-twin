@@ -228,7 +228,7 @@ test("当前消息链接查询缺少 Adapter 来源时补充来源并形成最�
     assert.equal(decisionInputs.length, 2);
     assert.equal(adapterRequests.length, 1);
     assert.deepEqual(promptSnapshots[0], service.capabilityGateway.snapshot());
-    assert.equal(result.response.text, "🤖【数字分身】流程目前处于待处理状态。");
+    assert.equal(result.response.text, "🤖 AI助理：流程目前处于待处理状态。");
     assert.deepEqual(result.lookups, [{
       round: 1,
       request: {
@@ -1032,7 +1032,7 @@ for (const [name, handler, expectedStatus] of [
       assert.equal(decisions, 2);
       assert.equal(result.lookups[0].result.status, expectedStatus);
       assert.equal(result.response.mode, "suggestion");
-      assert.equal(result.response.text.startsWith("🤖【建议】"), true);
+      assert.equal(result.response.text.startsWith("🤖 AI助理："), true);
       assert.match(result.response.text, /未返回可读内容.*人工检查/u);
       assert.doesNotMatch(JSON.stringify(result), /private failure body|流程已经处理完成/u);
     } finally {

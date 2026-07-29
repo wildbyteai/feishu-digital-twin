@@ -368,7 +368,10 @@ test("待确认业务动作在确认前被动态收紧时不再提交", async ()
 
     const requested = await runtime.handle(event({
       event_id: "evt_action_prepare",
-      message_id: "om_action_prepare"
+      message_id: "om_action_prepare",
+      chat_id: "oc_principal_bot_p2p",
+      chat_type: "p2p",
+      sender_open_id: original.principal.open_id
     }));
     const confirmationId = requested.confirmations[0].confirmation_id;
     const result = await runtime.handle(event({
