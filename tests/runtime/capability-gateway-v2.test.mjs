@@ -120,7 +120,50 @@ test("CapabilityGateway 只公开最小能力快照并返回稳定成功结果",
   assert.doesNotMatch(JSON.stringify(capabilityGateway.snapshot()), /adapter|transport|server|credential/u);
 });
 
-test("普通业务消息通过 Fake Adapter 查询后回到同一决策循环形成最终回复", async () => {
+test("CapabilityGateway 为当前消息中明确请求的链接补充缺失来源", async () => {
+  const sourceUrl = "https://example.invalid/workflows/42?view=detail#status";
+  const result = await gateway(async () => ({
+    status: "complete",
+    data: { title: "合成流程", state: "pending" },
+    source_refs: []
+  })).lookup({
+    capability: "fixture.workflow.read",
+    operation: "get",
+    input: { url: sourceUrl },
+    reason: "核实当前消息里的流程链接"
+  }, {
+    current_message_text: `请核实这个流程：${sourceUrl}`
+  });
+
+  assert.deepEqual(result.source_refs, ["https://example.invalid/workflows/42"]);
+});
+
+test("CapabilityGateway 不为当前消息之外或非 HTTP(S) 的输入补充来源", async () => {
+  const lookup = (input, currentMessageText) => gateway(async () => ({
+    status: "complete",
+    data: { title: "合成流程", state: "pending" },
+    source_refs: []
+  })).lookup({
+    capability: "fixture.workflow.read",
+    operation: "get",
+    input,
+    reason: "验证来源关联边界"
+  }, { current_message_text: currentMessageText });
+
+  const absent = await lookup(
+    { url: "https://example.invalid/workflows/42" },
+    "请核实另一个流程"
+  );
+  const nonHttp = await lookup(
+    { url: "fixture://workflow/42" },
+    "请核实 fixture://workflow/42"
+  );
+
+  assert.deepEqual(absent.source_refs, []);
+  assert.deepEqual(nonHttp.source_refs, []);
+});
+
+test("当前消息链接查询缺少 Adapter 来源时补充来源并形成最终回复", async () => {
   const runtimeState = state();
   const adapterRequests = [];
   const decisionInputs = [];
@@ -136,7 +179,7 @@ test("普通业务消息通过 Fake Adapter 查询后回到同一决策循环形
         return {
           status: "complete",
           data: { title: "合成流程", state: "pending", content: "等待负责人处理" },
-          source_refs: ["https://example.invalid/workflows/42"]
+          source_refs: []
         };
       }),
       runCodex: async (input, options) => {
@@ -152,7 +195,7 @@ test("普通业务消息通过 Fake Adapter 查询后回到同一决策循环形
             lookup_requests: [{
               capability: "fixture.workflow.read",
               operation: "get",
-              input: { workflow_id: "fixture-42" },
+              input: { url: "https://example.invalid/workflows/42" },
               reason: "核实流程状态"
             }],
             source_refs: [input.message_id]
@@ -178,6 +221,7 @@ test("普通业务消息通过 Fake Adapter 查询后回到同一决策循环形
     });
 
     const result = await service.handle(event({
+      text: "请核实这个流程：https://example.invalid/workflows/42",
       links: ["https://example.invalid/workflows/42"]
     }));
 
@@ -190,7 +234,7 @@ test("普通业务消息通过 Fake Adapter 查询后回到同一决策循环形
       request: {
         capability: "fixture.workflow.read",
         operation: "get",
-        input: { workflow_id: "fixture-42" },
+        input: { url: "https://example.invalid/workflows/42" },
         reason: "核实流程状态"
       },
       result: {
