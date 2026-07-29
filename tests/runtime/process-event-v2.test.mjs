@@ -65,6 +65,14 @@ test("AI 决定业务语义，可信运行时只添加数字分身标识", async
   assert.deepEqual(result.executable_commands, []);
 });
 
+test("没有后续能力请求的最终回复仍必须包含有效回复模式", async () => {
+  await assert.rejects(processEvent(event(), {
+    config: config(),
+    runtimeState: { getRuntimeState: () => ({ frozen: false }) },
+    runCodex: async () => decision({ response: null })
+  }), /decision\.response\.mode is invalid/u);
+});
+
 test("待本人确认保留具体建议并明确尚未生效", async () => {
   const result = await processEvent(event(), {
     config: config(),
