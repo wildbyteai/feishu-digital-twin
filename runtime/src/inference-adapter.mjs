@@ -29,7 +29,7 @@ function nonEmptyText(value) {
   return typeof value === "string" && value.length > 0;
 }
 
-function normalizeLookupRequest(request) {
+function normalizeCapabilityRequest(request) {
   let normalized = request;
   if (typeof request?.input === "string") {
     if (
@@ -44,6 +44,12 @@ function normalizeLookupRequest(request) {
   return normalized;
 }
 
+function normalizeCapabilityRequests(requests) {
+  const normalized = [];
+  for (const request of requests) normalized.push(normalizeCapabilityRequest(request));
+  return normalized;
+}
+
 function assertDecisionEnvelope(decision, event) {
   const fields = [
     "commands",
@@ -54,6 +60,7 @@ function assertDecisionEnvelope(decision, event) {
     "source_refs"
   ];
   if (Object.hasOwn(decision ?? {}, "lookup_requests")) fields.push("lookup_requests");
+  if (Object.hasOwn(decision ?? {}, "action_requests")) fields.push("action_requests");
   if (!exactFields(decision, fields)) {
     throw new InferenceError("INFERENCE_INVALID_OUTPUT");
   }
@@ -93,20 +100,32 @@ function assertDecisionEnvelope(decision, event) {
     }
   }
   const lookupRequests = decision.lookup_requests ?? [];
-  if (!Array.isArray(lookupRequests) || lookupRequests.length > 1) {
+  const actionRequests = decision.action_requests ?? [];
+  if (
+    !Array.isArray(lookupRequests) ||
+    !Array.isArray(actionRequests) ||
+    lookupRequests.length + actionRequests.length > 1 ||
+    (actionRequests.length > 0 && decision.commands.length > 0)
+  ) {
     throw new InferenceError("INFERENCE_INVALID_OUTPUT");
   }
-  const normalizedLookupRequests = [];
-  for (const request of lookupRequests) {
-    try {
-      normalizedLookupRequests.push(normalizeLookupRequest(request));
-    } catch {
-      throw new InferenceError("INFERENCE_INVALID_OUTPUT");
-    }
+  let normalizedLookupRequests;
+  let normalizedActionRequests;
+  try {
+    normalizedLookupRequests = normalizeCapabilityRequests(lookupRequests);
+    normalizedActionRequests = normalizeCapabilityRequests(actionRequests);
+  } catch {
+    throw new InferenceError("INFERENCE_INVALID_OUTPUT");
   }
-  return Object.hasOwn(decision, "lookup_requests")
-    ? { ...decision, lookup_requests: normalizedLookupRequests }
-    : decision;
+  return {
+    ...decision,
+    ...(Object.hasOwn(decision, "lookup_requests")
+      ? { lookup_requests: normalizedLookupRequests }
+      : {}),
+    ...(Object.hasOwn(decision, "action_requests")
+      ? { action_requests: normalizedActionRequests }
+      : {})
+  };
 }
 
 function classifyError(error) {

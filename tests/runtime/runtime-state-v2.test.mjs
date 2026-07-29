@@ -602,6 +602,208 @@ test("官方私有事件确认只验证操作者、动作绑定、时效和单�
   }
 });
 
+test("能力动作确认只保存公开动作引用并按 action_id 单次消费", () => {
+  const file = databasePath();
+  let now = "2026-07-16T10:00:00.000Z";
+  const state = new RuntimeState(file, {
+    clock: () => now,
+    privacyKey: Buffer.alloc(32, 13)
+  });
+  try {
+    state.createConfirmation({
+      confirmation_id: "confirm-capability-1",
+      kind: "capability",
+      action_id: "action-public-1",
+      operator_open_id: "ou_principal",
+      expires_at: "2026-07-16T10:05:00.000Z",
+      reason: "审批动作待本人确认",
+      source_event_id: "evt_source",
+      source_chat_id: "oc_source",
+      source_message_id: "om_source",
+      confirmation_token: "private-oa-token",
+      confirmation_phrase: "private-oa-phrase",
+      confirm_tool: "approval.confirm"
+    });
+
+    const confirmation = state.getConfirmation("confirm-capability-1");
+    assert.equal(confirmation.kind, "capability");
+    assert.equal(confirmation.action_id, "action-public-1");
+    assert.equal(confirmation.action, null);
+
+    const database = new DatabaseSync(file, { readOnly: true });
+    const persisted = database.prepare(`
+      SELECT * FROM confirmations WHERE confirmation_id = ?
+    `).get("confirm-capability-1");
+    database.close();
+    assert.deepEqual({
+      kind: persisted.kind,
+      action_id: persisted.action_id,
+      action_json: persisted.action_json
+    }, {
+      kind: "capability",
+      action_id: "action-public-1",
+      action_json: null
+    });
+    assert.doesNotMatch(
+      JSON.stringify(persisted),
+      /private-oa-token|private-oa-phrase|approval\.confirm/u
+    );
+
+    assert.deepEqual(state.resolveConfirmation({
+      confirmation_id: "confirm-capability-1",
+      action_id: "action-forged",
+      operator_open_id: "ou_principal",
+      event_id: "callback-forged",
+      decision: "approve"
+    }), { accepted: false, reason: "ACTION_MISMATCH" });
+    assert.deepEqual(state.resolveConfirmation({
+      confirmation_id: "confirm-capability-1",
+      action_id: "action-public-1",
+      operator_open_id: "ou_other",
+      event_id: "callback-wrong-operator",
+      decision: "approve"
+    }), { accepted: false, reason: "OPERATOR_MISMATCH" });
+    assert.deepEqual(state.resolveConfirmation({
+      confirmation_id: "confirm-capability-1",
+      action_id: "action-public-1",
+      operator_open_id: "ou_principal",
+      event_id: "callback-capability-1",
+      decision: "approve"
+    }), { accepted: true, status: "approved" });
+    assert.deepEqual(state.resolveConfirmation({
+      confirmation_id: "confirm-capability-1",
+      action_id: "action-public-1",
+      operator_open_id: "ou_principal",
+      event_id: "callback-capability-1",
+      decision: "approve"
+    }), { accepted: false, reason: "DUPLICATE_EVENT" });
+    assert.deepEqual(state.resolveConfirmation({
+      confirmation_id: "confirm-capability-1",
+      action_id: "action-public-1",
+      operator_open_id: "ou_principal",
+      event_id: "callback-capability-replay",
+      decision: "approve"
+    }), { accepted: false, reason: "ALREADY_RESOLVED" });
+
+    state.createConfirmation({
+      confirmation_id: "confirm-capability-expired",
+      kind: "capability",
+      action_id: "action-public-expired",
+      operator_open_id: "ou_principal",
+      expires_at: "2026-07-16T10:05:00.000Z"
+    });
+    now = "2026-07-16T10:06:00.000Z";
+    assert.deepEqual(state.resolveConfirmation({
+      confirmation_id: "confirm-capability-expired",
+      action_id: "action-public-expired",
+      operator_open_id: "ou_principal",
+      event_id: "callback-capability-expired",
+      decision: "approve"
+    }), { accepted: false, reason: "EXPIRED" });
+  } finally {
+    state.close();
+  }
+});
+
+test("能力动作确认拒绝持久化命令载荷且旧命令确认默认兼容", () => {
+  const state = new RuntimeState(databasePath(), {
+    clock: () => "2026-07-16T10:00:00.000Z"
+  });
+  try {
+    assert.throws(() => state.createConfirmation({
+      confirmation_id: "confirm-capability-secret",
+      kind: "capability",
+      action_id: "action-public-secret-test",
+      operator_open_id: "ou_principal",
+      expires_at: "2026-07-16T10:05:00.000Z",
+      action: {
+        argv: ["approval.confirm", "--token", "private-token", "--phrase", "private-phrase"]
+      }
+    }), /capability confirmation cannot store a command action/u);
+    assert.equal(state.getConfirmation("confirm-capability-secret"), null);
+
+    state.createConfirmation({
+      confirmation_id: "confirm-command-compatible",
+      action_hash: "d".repeat(64),
+      operator_open_id: "ou_principal",
+      expires_at: "2026-07-16T10:05:00.000Z",
+      action: { argv: ["task", "+create"] }
+    });
+    const command = state.getConfirmation("confirm-command-compatible");
+    assert.equal(command.kind, "command");
+    assert.equal(command.action_hash, "d".repeat(64));
+    assert.equal(command.action_id, null);
+    assert.deepEqual(command.action, { argv: ["task", "+create"] });
+    assert.deepEqual(state.resolveConfirmation({
+      confirmation_id: "confirm-command-compatible",
+      action_hash: "d".repeat(64),
+      operator_open_id: "ou_principal",
+      event_id: "callback-command-compatible",
+      decision: "reject"
+    }), { accepted: true, status: "rejected" });
+  } finally {
+    state.close();
+  }
+});
+
+test("旧状态库中的命令确认行迁移后默认保持 command 类型", () => {
+  const file = databasePath();
+  const privacyKey = Buffer.alloc(32, 15);
+  const initialized = new RuntimeState(file, { privacyKey });
+  initialized.close();
+
+  const legacy = new DatabaseSync(file);
+  legacy.exec(`
+    DROP TABLE confirmations;
+    CREATE TABLE confirmations (
+      confirmation_id TEXT PRIMARY KEY,
+      action_hash TEXT NOT NULL,
+      operator_open_id TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      action_json TEXT,
+      reason TEXT,
+      requires_yes INTEGER NOT NULL DEFAULT 0 CHECK (requires_yes IN (0, 1)),
+      source_event_id TEXT,
+      source_chat_id TEXT,
+      source_message_id TEXT,
+      source_reply_identity TEXT NOT NULL DEFAULT 'user'
+        CHECK (source_reply_identity IN ('user', 'bot')),
+      status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'expired')),
+      created_at TEXT NOT NULL,
+      resolved_at TEXT,
+      resolved_event_id TEXT
+    );
+  `);
+  legacy.prepare(`
+    INSERT INTO confirmations (
+      confirmation_id, action_hash, operator_open_id, expires_at, action_json,
+      status, created_at
+    ) VALUES (?, ?, ?, ?, ?, 'pending', ?)
+  `).run(
+    "confirm-legacy-command",
+    "e".repeat(64),
+    "operator_legacy_projected",
+    "2026-07-16T10:05:00.000Z",
+    JSON.stringify({ argv: ["task", "+create"] }),
+    "2026-07-16T10:00:00.000Z"
+  );
+  legacy.close();
+
+  const migrated = new RuntimeState(file, {
+    clock: () => "2026-07-16T10:00:00.000Z",
+    privacyKey
+  });
+  try {
+    const confirmation = migrated.getConfirmation("confirm-legacy-command");
+    assert.equal(confirmation.kind, "command");
+    assert.equal(confirmation.action_hash, "e".repeat(64));
+    assert.equal(confirmation.action_id, null);
+    assert.deepEqual(confirmation.action, { argv: ["task", "+create"] });
+  } finally {
+    migrated.close();
+  }
+});
+
 test("短暂的 SQLite 写锁会等待释放而不是立即失败", async () => {
   const file = databasePath();
   const state = new RuntimeState(file, {

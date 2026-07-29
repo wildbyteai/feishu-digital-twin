@@ -151,6 +151,37 @@ test("Codex 决策契约接受独立的语义能力查询且拒绝传输细节",
   );
 });
 
+test("Codex 决策契约接受需本人确认的语义业务动作", async () => {
+  const adapter = new CodexInferenceAdapter({
+    codexBin: fakeCodex,
+    codexEnvironmentRoot: "/fixture/not-used",
+    runner: async (candidate) => ({
+      event_id: candidate.event_id,
+      outcome: "confirm",
+      reason: "准备审批后等待本人确认",
+      response: { mode: "confirmation", text: "建议同意这条审批。" },
+      commands: [],
+      lookup_requests: [],
+      action_requests: [{
+        capability: "fixture.approval.execute",
+        operation: "prepare",
+        input: JSON.stringify({ record_id: "fixture-42", decision: "approve" }),
+        reason: "准备审批"
+      }],
+      source_refs: [candidate.message_id]
+    })
+  });
+
+  const decision = await adapter.decide({ event: event() });
+
+  assert.deepEqual(decision.action_requests, [{
+    capability: "fixture.approval.execute",
+    operation: "prepare",
+    input: { record_id: "fixture-42", decision: "approve" },
+    reason: "准备审批"
+  }]);
+});
+
 test("Codex 严格输出中的 JSON 字符串查询输入会在可信边界还原为对象", async () => {
   const adapter = new CodexInferenceAdapter({
     codexBin: fakeCodex,
@@ -187,6 +218,11 @@ test("Codex 严格输出 Schema 要求查询数组并使用有界 JSON 字符串
   assert.equal(schema.required.includes("lookup_requests"), true);
   assert.deepEqual(
     schema.properties.lookup_requests.items.properties.input,
+    { type: "string", minLength: 2, maxLength: 8192 }
+  );
+  assert.equal(schema.required.includes("action_requests"), true);
+  assert.deepEqual(
+    schema.properties.action_requests.items.properties.input,
     { type: "string", minLength: 2, maxLength: 8192 }
   );
 });

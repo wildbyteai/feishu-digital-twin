@@ -1,4 +1,5 @@
 const PACK_FIELDS = Object.freeze([
+  "actions",
   "capabilities",
   "pack_id",
   "pack_version",
@@ -26,6 +27,25 @@ const INPUT_CONSTRAINT_FIELDS = Object.freeze([
   "max_bytes",
   "required_fields"
 ]);
+const ACTION_FIELDS = Object.freeze([
+  "capability",
+  "confirmation",
+  "confirm_tool",
+  "failure_policy",
+  "input_constraints",
+  "input_description",
+  "operation",
+  "prepare_tool",
+  "purpose",
+  "trust_zone"
+]);
+const CONFIRMATION_FIELDS = Object.freeze([
+  "passthrough_fields",
+  "phrase_argument",
+  "phrase_field",
+  "token_argument",
+  "token_field"
+]);
 const PORTABLE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const PACK_VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u;
 const MAX_INPUT_BYTES = 8 * 1024;
@@ -40,6 +60,7 @@ const READ_OPERATIONS = new Set([
   "search"
 ]);
 const TRUSTED_READ_ONLY_TOOLS = Symbol("trusted read-only MCP tools");
+const TRUSTED_TOOL_RISKS = Symbol("trusted MCP tool risks");
 
 function requireExactObject(value, fields, name) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -49,6 +70,21 @@ function requireExactObject(value, fields, name) {
   const expected = [...fields].sort();
   if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) {
     throw new TypeError(`${name} has invalid fields`);
+  }
+  return value;
+}
+
+function requirePack(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("pack must be an object");
+  }
+  const allowed = new Set(PACK_FIELDS);
+  const required = PACK_FIELDS.filter((field) => field !== "actions");
+  if (
+    Object.keys(value).some((field) => !allowed.has(field)) ||
+    required.some((field) => !Object.hasOwn(value, field))
+  ) {
+    throw new TypeError("pack has invalid fields");
   }
   return value;
 }
@@ -112,8 +148,76 @@ function validateTool(value, index) {
   const name = `pack.tools[${index}]`;
   const tool = requireExactObject(value, TOOL_FIELDS, name);
   requireText(tool.name, `${name}.name`, { pattern: PORTABLE_ID });
-  if (tool.risk !== "read") throw new TypeError(`${name}.risk must be read`);
+  if (!new Set(["read", "prepare", "write"]).has(tool.risk)) {
+    throw new TypeError(`${name}.risk must be read, prepare, or write`);
+  }
   return structuredClone(tool);
+}
+
+function validateAction(value, index) {
+  const name = `pack.actions[${index}]`;
+  const action = requireExactObject(value, ACTION_FIELDS, name);
+  const confirmation = requireExactObject(
+    action.confirmation,
+    CONFIRMATION_FIELDS,
+    `${name}.confirmation`
+  );
+  const validated = {
+    capability: requireText(action.capability, `${name}.capability`, { pattern: PORTABLE_ID }),
+    operation: requireText(action.operation, `${name}.operation`, { pattern: PORTABLE_ID }),
+    purpose: requireText(action.purpose, `${name}.purpose`),
+    prepare_tool: requireText(action.prepare_tool, `${name}.prepare_tool`, { pattern: PORTABLE_ID }),
+    confirm_tool: requireText(action.confirm_tool, `${name}.confirm_tool`, { pattern: PORTABLE_ID }),
+    input_constraints: validateInputConstraints(
+      action.input_constraints,
+      `${name}.input_constraints`
+    ),
+    confirmation: {
+      token_field: requireText(confirmation.token_field, `${name}.confirmation.token_field`, {
+        pattern: PORTABLE_ID
+      }),
+      phrase_field: requireText(confirmation.phrase_field, `${name}.confirmation.phrase_field`, {
+        pattern: PORTABLE_ID
+      }),
+      token_argument: requireText(
+        confirmation.token_argument,
+        `${name}.confirmation.token_argument`,
+        { pattern: PORTABLE_ID }
+      ),
+      phrase_argument: requireText(
+        confirmation.phrase_argument,
+        `${name}.confirmation.phrase_argument`,
+        { pattern: PORTABLE_ID }
+      ),
+      passthrough_fields: requireUniqueTextArray(
+        confirmation.passthrough_fields,
+        `${name}.confirmation.passthrough_fields`,
+        { nonEmpty: false }
+      )
+    },
+    trust_zone: action.trust_zone,
+    input_description: requireBoundedText(
+      action.input_description,
+      `${name}.input_description`,
+      MAX_INPUT_DESCRIPTION_BYTES
+    ),
+    failure_policy: action.failure_policy
+  };
+  if (validated.prepare_tool === validated.confirm_tool) {
+    throw new TypeError(`${name} prepare and confirm tools must differ`);
+  }
+  if (validated.confirmation.passthrough_fields.some((field) => (
+    !validated.input_constraints.allowed_fields.includes(field)
+  ))) {
+    throw new TypeError(`${name}.confirmation passthrough fields must be allowed inputs`);
+  }
+  if (validated.trust_zone !== "internal") {
+    throw new TypeError(`${name}.trust_zone must be internal`);
+  }
+  if (validated.failure_policy !== "human-fallback") {
+    throw new TypeError(`${name}.failure_policy must be human-fallback`);
+  }
+  return validated;
 }
 
 function validateCapability(value, index) {
@@ -169,7 +273,7 @@ function validateCapability(value, index) {
 }
 
 export function validatePrivateCapabilityPack(value) {
-  const pack = requireExactObject(value, PACK_FIELDS, "pack");
+  const pack = requirePack(value);
   if (pack.schema_version !== 1) throw new TypeError("pack.schema_version must be 1");
   requireText(pack.pack_id, "pack.pack_id", { pattern: PORTABLE_ID });
   requireText(pack.pack_version, "pack.pack_version", { pattern: PACK_VERSION });
@@ -177,8 +281,14 @@ export function validatePrivateCapabilityPack(value) {
   if (!Array.isArray(pack.tools) || pack.tools.length === 0) {
     throw new TypeError("pack.tools must be a non-empty array");
   }
-  if (!Array.isArray(pack.capabilities) || pack.capabilities.length === 0) {
-    throw new TypeError("pack.capabilities must be a non-empty array");
+  if (!Array.isArray(pack.capabilities)) {
+    throw new TypeError("pack.capabilities must be an array");
+  }
+  if (pack.actions !== undefined && !Array.isArray(pack.actions)) {
+    throw new TypeError("pack.actions must be an array");
+  }
+  if (pack.capabilities.length === 0 && (pack.actions?.length ?? 0) === 0) {
+    throw new TypeError("pack must declare at least one capability or action");
   }
   const tools = pack.tools.map(validateTool);
   if (new Set(tools.map(({ name }) => name)).size !== tools.length) {
@@ -188,13 +298,23 @@ export function validatePrivateCapabilityPack(value) {
   if (new Set(capabilities.map(({ capability }) => capability)).size !== capabilities.length) {
     throw new TypeError("pack.capabilities must have unique identifiers");
   }
-  const allowedTools = new Set(tools.map(({ name }) => name));
+  const actions = (pack.actions ?? []).map(validateAction);
+  if (new Set(actions.map(({ capability }) => capability)).size !== actions.length) {
+    throw new TypeError("pack.actions must have unique capability identifiers");
+  }
+  const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
+  const allowedTools = new Set(toolsByName.keys());
   const referencedTools = new Set(capabilities.flatMap(({ operations }) =>
     operations.map(({ tool }) => tool)
   ));
-  const toolMappings = capabilities.flatMap(({ operations }) =>
-    operations.map(({ tool }) => tool)
-  );
+  const actionTools = actions.flatMap(({ prepare_tool: prepareTool, confirm_tool: confirmTool }) => (
+    [prepareTool, confirmTool]
+  ));
+  const toolMappings = [
+    ...capabilities.flatMap(({ operations }) => operations.map(({ tool }) => tool)),
+    ...actionTools
+  ];
+  actionTools.forEach((tool) => referencedTools.add(tool));
   if (referencedTools.size !== toolMappings.length) {
     throw new TypeError("pack tools must map to exactly one capability operation");
   }
@@ -204,13 +324,29 @@ export function validatePrivateCapabilityPack(value) {
   if ([...allowedTools].some((tool) => !referencedTools.has(tool))) {
     throw new TypeError("pack tool allowlist must contain only mapped tools");
   }
+  for (const capability of capabilities) {
+    for (const operation of capability.operations) {
+      if (toolsByName.get(operation.tool)?.risk !== "read") {
+        throw new TypeError("read capability tool must declare read risk");
+      }
+    }
+  }
+  for (const action of actions) {
+    if (toolsByName.get(action.prepare_tool)?.risk !== "prepare") {
+      throw new TypeError("action prepare tool must declare prepare risk");
+    }
+    if (toolsByName.get(action.confirm_tool)?.risk !== "write") {
+      throw new TypeError("action confirm tool must declare write risk");
+    }
+  }
   return {
     schema_version: 1,
     pack_id: pack.pack_id,
     pack_version: pack.pack_version,
     server_ref: pack.server_ref,
     tools,
-    capabilities
+    capabilities,
+    ...(pack.actions === undefined ? {} : { actions })
   };
 }
 
@@ -278,31 +414,35 @@ function normalizeMcpToolResult(result) {
   };
 }
 
-function advertisedReadOnlyTools(result) {
+export function advertisedMcpToolRisks(result) {
   const tools = Array.isArray(result)
     ? result
     : Array.isArray(result?.tools)
       ? result.tools
       : null;
   if (tools === null) return null;
-  const readOnlyTools = new Set();
+  const risks = new Map();
   for (const tool of tools) {
     if (!tool || typeof tool !== "object" || Array.isArray(tool)) return null;
     if (typeof tool.name !== "string" || tool.name.length === 0) return null;
-    if (
-      tool.annotations?.readOnlyHint === true &&
-      tool.annotations?.destructiveHint !== true
-    ) {
-      readOnlyTools.add(tool.name);
-    }
+    if (risks.has(tool.name)) return null;
+    const readOnly = tool.annotations?.readOnlyHint;
+    const destructive = tool.annotations?.destructiveHint;
+    if (readOnly === true && destructive !== true) risks.set(tool.name, "read");
+    else if (readOnly === false && destructive === false) risks.set(tool.name, "prepare");
+    else if (readOnly === false && destructive === true) risks.set(tool.name, "write");
   }
-  return readOnlyTools;
+  return risks;
 }
 
-function trustedServer(server, readOnlyTools) {
+function trustedServer(server, toolRisks) {
+  const readOnlyTools = new Set([...toolRisks.entries()]
+    .filter(([, risk]) => risk === "read")
+    .map(([name]) => name));
   return Object.freeze({
     callTool: server.callTool.bind(server),
-    [TRUSTED_READ_ONLY_TOOLS]: readOnlyTools
+    [TRUSTED_READ_ONLY_TOOLS]: readOnlyTools,
+    [TRUSTED_TOOL_RISKS]: new Map(toolRisks)
   });
 }
 
@@ -325,14 +465,14 @@ export async function resolvePrivateCapabilityServers({
       throw new TypeError("resolved MCP server callTool is required");
     }
     if (typeof server.listTools !== "function") continue;
-    let readOnlyTools;
+    let toolRisks;
     try {
-      readOnlyTools = advertisedReadOnlyTools(await server.listTools());
+      toolRisks = advertisedMcpToolRisks(await server.listTools());
     } catch {
       continue;
     }
-    if (readOnlyTools === null) continue;
-    servers.set(serverRef, trustedServer(server, readOnlyTools));
+    if (toolRisks === null) continue;
+    servers.set(serverRef, trustedServer(server, toolRisks));
   }
   return servers;
 }
@@ -369,6 +509,83 @@ export class McpCapabilityAdapter {
   }
 }
 
+class McpCapabilityActionAdapter {
+  constructor({ server, action, toolRisks }) {
+    this.server = server;
+    this.action = structuredClone(action);
+    this.toolRisks = new Map(toolRisks);
+  }
+
+  async prepare(request) {
+    if (
+      request.operation !== this.action.operation ||
+      this.toolRisks.get(this.action.prepare_tool) !== "prepare" ||
+      !validateAdapterInput(request.input, this.action.input_constraints)
+    ) {
+      return { status: "invalid-input" };
+    }
+    const normalized = normalizeMcpToolResult(await this.server.callTool({
+      name: this.action.prepare_tool,
+      arguments: structuredClone(request.input)
+    }));
+    if (normalized.status !== "complete") return normalized;
+    const data = normalized.data;
+    const proof = data?.[this.action.confirmation.token_field];
+    const phrase = data?.[this.action.confirmation.phrase_field];
+    if (
+      data?.requiresUserConfirmation !== true ||
+      typeof proof !== "string" ||
+      proof.length === 0 ||
+      typeof phrase !== "string" ||
+      phrase.length === 0
+    ) {
+      return { status: "failed" };
+    }
+    const preview = structuredClone(data);
+    delete preview[this.action.confirmation.token_field];
+    delete preview[this.action.confirmation.phrase_field];
+    delete preview.nextStep;
+    const passthrough = Object.fromEntries(this.action.confirmation.passthrough_fields
+      .filter((field) => Object.hasOwn(request.input, field))
+      .map((field) => [field, structuredClone(request.input[field])]));
+    return {
+      status: "confirmation-required",
+      preview,
+      pending_action: { token: proof, phrase, passthrough }
+    };
+  }
+
+  async confirm(payload, operation) {
+    if (
+      operation !== this.action.operation ||
+      this.toolRisks.get(this.action.confirm_tool) !== "write" ||
+      !requirePendingPayload(payload, this.action.confirmation.passthrough_fields)
+    ) {
+      return { status: "invalid-input" };
+    }
+    return normalizeMcpToolResult(await this.server.callTool({
+      name: this.action.confirm_tool,
+      arguments: {
+        [this.action.confirmation.token_argument]: payload.token,
+        [this.action.confirmation.phrase_argument]: payload.phrase,
+        ...structuredClone(payload.passthrough)
+      }
+    }));
+  }
+}
+
+function requirePendingPayload(payload, passthroughFields) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+  const keys = Object.keys(payload).sort();
+  if (keys.join("\0") !== ["passthrough", "phrase", "token"].sort().join("\0")) return false;
+  if (typeof payload.token !== "string" || payload.token.length === 0) return false;
+  if (typeof payload.phrase !== "string" || payload.phrase.length === 0) return false;
+  if (!payload.passthrough || typeof payload.passthrough !== "object" || Array.isArray(payload.passthrough)) {
+    return false;
+  }
+  return Object.keys(payload.passthrough).every((field) => passthroughFields.includes(field));
+}
+
 export function compilePrivateCapabilityPacks({ packs = [], servers = new Map() } = {}) {
   if (!Array.isArray(packs)) throw new TypeError("packs must be an array");
   if (!(servers instanceof Map)) throw new TypeError("servers must be a Map");
@@ -389,15 +606,29 @@ export function compilePrivateCapabilityPacks({ packs = [], servers = new Map() 
         mappedServerTools.add(mapping);
       }
     }
+    for (const action of pack.actions ?? []) {
+      for (const tool of [action.prepare_tool, action.confirm_tool]) {
+        const mapping = `${pack.server_ref}\0${tool}`;
+        if (mappedServerTools.has(mapping)) {
+          throw new TypeError(
+            "each server tool must map to exactly one semantic capability operation"
+          );
+        }
+        mappedServerTools.add(mapping);
+      }
+    }
   }
   const capabilities = [];
   const adapters = new Map();
+  const actionCapabilities = [];
+  const actionAdapters = new Map();
   for (const pack of validated) {
     const server = servers.get(pack.server_ref);
     if (server !== undefined && typeof server?.callTool !== "function") {
       throw new TypeError("MCP server callTool is required");
     }
     const readOnlyTools = server?.[TRUSTED_READ_ONLY_TOOLS];
+    const toolRisks = server?.[TRUSTED_TOOL_RISKS];
     for (const capability of pack.capabilities) {
       if (capabilities.some((item) => item.capability === capability.capability)) {
         throw new TypeError("semantic capability identifiers must be unique");
@@ -422,6 +653,33 @@ export function compilePrivateCapabilityPacks({ packs = [], servers = new Map() 
         }));
       }
     }
+    for (const action of pack.actions ?? []) {
+      if (
+        capabilities.some((item) => item.capability === action.capability) ||
+        actionCapabilities.some((item) => item.capability === action.capability)
+      ) {
+        throw new TypeError("semantic action capability identifiers must be unique");
+      }
+      const ready = toolRisks instanceof Map &&
+        toolRisks.get(action.prepare_tool) === "prepare" &&
+        toolRisks.get(action.confirm_tool) === "write";
+      actionCapabilities.push({
+        capability: action.capability,
+        purpose: action.purpose,
+        operations: [action.operation],
+        risk: "approval",
+        trust_zone: action.trust_zone,
+        readiness: ready ? "ready" : "unavailable",
+        input_description: action.input_description
+      });
+      if (ready) {
+        actionAdapters.set(action.capability, new McpCapabilityActionAdapter({
+          server,
+          action,
+          toolRisks
+        }));
+      }
+    }
   }
-  return { capabilities, adapters };
+  return { capabilities, adapters, actionCapabilities, actionAdapters };
 }

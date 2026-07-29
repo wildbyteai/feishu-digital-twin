@@ -92,6 +92,7 @@ function truncateUtf8(value, maxBytes) {
 function publicSearchResult(query, decision) {
   const fields = ["commands", "event_id", "outcome", "reason", "response", "source_refs"];
   if (Object.hasOwn(decision ?? {}, "lookup_requests")) fields.push("lookup_requests");
+  if (Object.hasOwn(decision ?? {}, "action_requests")) fields.push("action_requests");
   if (
     !exactFields(decision, fields) ||
     decision.event_id !== PUBLIC_SEARCH_EVENT.event_id ||
@@ -106,6 +107,8 @@ function publicSearchResult(query, decision) {
     decision.commands.length !== 0 ||
     !Array.isArray(decision.lookup_requests ?? []) ||
     (decision.lookup_requests ?? []).length !== 0 ||
+    !Array.isArray(decision.action_requests ?? []) ||
+    (decision.action_requests ?? []).length !== 0 ||
     !Array.isArray(decision.source_refs)
   ) {
     throw new TypeError("public Web Search returned an invalid decision");

@@ -2,22 +2,23 @@
 
 [中文](./business-capabilities.md)
 
-Pluggable business capabilities let the digital twin retrieve current public information or approved internal material during an ordinary business conversation. They are not a separate search mode, and they do not expose every local MCP server, browser, or file to Codex.
+Pluggable business capabilities let the digital twin retrieve current public information or approved internal material, and prepare business actions that require the principal's confirmation. They are not a separate search mode, and they do not expose every local MCP server, browser, or file to Codex.
 
 ## What the public product includes
 
 The public source and distribution allowlists include the complete generic mechanism:
 
 - the public `CapabilityGateway` contract;
+- the `CapabilityActionGateway` prepare, confirm, and single-consumption contract;
 - the public `Web Search Adapter`;
-- the generic read-only `MCP Adapter`;
-- an explicit MCP server resolver seam;
+- the generic read and confirmation-gated `MCP Adapter`;
+- the explicit `resolveCapabilityServer` MCP server resolver seam;
 - the declarative `runtime/schemas/capability-pack.schema.json` contract;
 - `FakeCapabilityAdapter`, neutral fixtures, and tests at the same public seams.
 
 The private layer therefore contains only a deployer's declarations, external MCP implementation and authentication, real resource identifiers, and business rules. It does not contain a product feature withheld from the public release.
 
-The business-decision Codex session remains offline. It sees only semantic capability identifiers, purposes, operations, risk, trust zone, readiness, and bounded input descriptions. It never sees private pack paths, MCP server references, tool names, endpoints, or credentials. The trusted runtime performs approved lookups through `CapabilityGateway`.
+The business-decision Codex session remains offline. It sees only semantic capability identifiers, purposes, operations, risk, trust zone, readiness, and bounded input descriptions. It never sees private pack paths, MCP server references, tool names, endpoints, confirmation proofs, or credentials. The trusted runtime performs lookups through `CapabilityGateway`; `CapabilityActionGateway` prepares a preview, requests the principal's private confirmation, and submits once.
 
 ## Neutral pack example
 
@@ -25,14 +26,15 @@ The business-decision Codex session remains offline. It sees only semantic capab
 
 - live outside the product source tree, in a current-user-only directory with a `0600` manifest;
 - use `schema_version: 1` and a semantic `pack_version`;
-- declare only `read` risk, the `internal` trust zone, and `human-fallback`;
-- name the exact tool allowlist, read operation, allowed and required input fields, and byte limit;
+- declare `read` tools for lookups; a confirmation-gated action must pair a non-destructive `prepare` tool with a destructive `write` tool, using the `internal` trust zone and `human-fallback`;
+- name the exact tool allowlist, semantic operation, allowed and required input fields, byte limit, and confirmation-field mapping;
 - contain no JavaScript, shell hook, credential, cookie, browser material, or model configuration.
 
 The candidate instance configuration explicitly lists installed packs and the local capability ceiling:
 
 ```json
 {
+  "reuse_codex_mcp_servers": true,
   "private_capability_packs": ["example.records"],
   "allowed_capabilities": ["example.records.read"],
   "required_capabilities": []
@@ -53,9 +55,11 @@ feishu-digital-twin setup \
   --approve-capability-trust-zone internal
 ```
 
-`--approve-capability-trust-zone internal` approves only the newly introduced or changed internal data boundary; it is not a daily switch. Changing a pack's MCP server reference, tool binding, trust zone, operation, or input constraints requires setup and confirmation again.
+`--approve-capability-trust-zone internal` approves only the newly introduced or changed internal data boundary; it is not a daily switch. Changing a pack's MCP server reference, tool binding, trust zone, operation, confirmation mapping, or input constraints requires setup and confirmation again.
 
-This step installs and validates declarations; it does not make the standard CLI scan or reuse MCP configuration from the user's main Codex or desktop applications. The public generic Adapter receives a deployer-managed server through the explicit `resolveCapabilityServer` seam. A mapped tool is usable only when `listTools` metadata explicitly sets `annotations.readOnlyHint: true` without a destructive annotation; missing or ambiguous evidence fails closed. The standard CLI injects no resolver or transport by default. Without an approved resolver in the deployment runtime composition, Doctor and lookups deterministically report `unavailable` and use human fallback instead of discovering another MCP server. The real internal MCP implementation, authentication, and deployment wiring remain deployer-managed and never enter public examples or release artifacts.
+By default, the product does not scan or reuse MCP configuration from the user's main Codex or desktop applications. Only when the instance explicitly sets `reuse_codex_mcp_servers: true` does the runtime execute `codex mcp get` for the exact server references declared by installed packs; it never calls MCP list or discovers another local MCP. Lookup tools must be read-only and non-destructive, prepare tools must be non-read-only and non-destructive, and submit tools must be non-read-only and destructive. Missing or ambiguous annotations fail closed as `unavailable`. The real internal MCP implementation, authentication, and private pack remain deployer-managed and never enter public examples or release artifacts.
+
+Confirmation-gated actions always use prepare → principal confirmation → submit. Confirmation proofs remain only in the background process memory; Codex, the public Feishu conversation, and long-term SQLite state never receive them. SQLite stores only a random `action_id`. Rejection, expiration, replay, policy narrowing, or service restart makes the pending submit fail closed.
 
 Public Web Search does not use a private pack. It is installed only when the candidate configuration explicitly sets `public_web_search_approved: true`; production-data approval does not imply public-network approval. When `allowed_capabilities` is present, it must also include `public.web.search` to permit that capability.
 
@@ -74,7 +78,7 @@ feishu-digital-twin status
 
 Doctor uses non-business synthetic checks and reports only the semantic capability identifier, stable readiness code, latency, and required flag. It does not read a real workflow, invoke a business tool, or print private paths, MCP server references, tool names, endpoints, credentials, or result bodies. A successful lookup that contains credential-shaped text fails closed, and opaque source references are dropped.
 
-If a lookup is unavailable, unauthenticated, unauthorized, timed out, invalid, failed, or empty, the runtime does not switch trust zones or try a browser or local file. It guarantees `human-fallback` in the original authorized conversation, clearly asking for human handling without inventing business content or contacting another person.
+If a lookup or action prepare/submit is unavailable, unauthenticated, unauthorized, timed out, invalid, failed, or empty, the runtime does not switch trust zones or try a browser or local file. It guarantees `human-fallback` in the original authorized conversation, clearly asking for human handling without inventing business content or contacting another person.
 
 ## Revoke
 

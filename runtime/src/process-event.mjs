@@ -113,10 +113,24 @@ function validateDecision(decision, event, { silent = false } = {}) {
     }
   }
   const lookupRequests = decision.lookup_requests ?? [];
-  if (!Array.isArray(lookupRequests) || lookupRequests.length > 1) {
+  const actionRequests = decision.action_requests ?? [];
+  if (!Array.isArray(lookupRequests) || !Array.isArray(actionRequests)) {
+    throw new TypeError("decision capability requests must be arrays");
+  }
+  if (lookupRequests.length > 1) {
     throw new TypeError("decision.lookup_requests cannot contain more than one query per round");
   }
+  if (actionRequests.length > 1) {
+    throw new TypeError("decision.action_requests cannot contain more than one action per round");
+  }
+  if (lookupRequests.length + actionRequests.length > 1) {
+    throw new TypeError("decision can contain only one semantic capability request per round");
+  }
+  if (actionRequests.length > 0 && decision.commands.length > 0) {
+    throw new TypeError("decision cannot mix a semantic business action with Feishu commands");
+  }
   for (const request of lookupRequests) validateCapabilityLookupRequest(request);
+  for (const request of actionRequests) validateCapabilityLookupRequest(request);
   if (decision.outcome !== "ignore") {
     if (decision.response === null && silent) {
       // Trusted local system events never publish the model response.
@@ -382,7 +396,8 @@ function requiresLinkFallback(event, decision) {
     !hasReadableCapabilityEvidence(event, links) &&
     decision.outcome !== "ignore" &&
     decision.commands.length === 0 &&
-    (decision.lookup_requests ?? []).length === 0;
+    (decision.lookup_requests ?? []).length === 0 &&
+    (decision.action_requests ?? []).length === 0;
 }
 
 function finish(runtimeState, eventId, result) {
@@ -525,12 +540,14 @@ export async function processEvent(event, {
           contextFetched: candidateEvent.context_meta?.fetched === true
         }),
         response: null,
+        action_requests: [],
         executable_commands: [],
         confirmation_commands: []
       });
     }
 
     const draftOnly = state.frozen === true;
+    const actionRequests = draftOnly ? [] : decision.action_requests ?? [];
     const confirmationCommands = draftOnly ? [] : decision.commands.filter((command) =>
       command.confirmation === "human" || decision.outcome === "confirm"
     );
@@ -539,7 +556,7 @@ export async function processEvent(event, {
     );
     const forceMode = draftOnly
       ? "suggestion"
-      : decision.outcome === "confirm" || confirmationCommands.length > 0
+      : decision.outcome === "confirm" || confirmationCommands.length > 0 || actionRequests.length > 0
       ? "confirmation"
       : undefined;
 
@@ -552,6 +569,7 @@ export async function processEvent(event, {
       response: decision.response === null
         ? null
         : visibleResponse(decision.response, config.principal.name, { forceMode }),
+      action_requests: actionRequests,
       executable_commands: executableCommands,
       confirmation_commands: confirmationCommands
     });

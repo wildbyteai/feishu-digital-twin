@@ -120,7 +120,7 @@ Feishu permissions have three layers: the application's **Bot scopes**, the prin
 
 New instances default to `message_scope=bot_only` and at least the `im,base` local domains; `base` is reserved for the mandatory control console. Do not request `all` by default, and do not request organization-management or member-management permissions unrelated to the selected capabilities.
 
-Web Search and private MCP reads do not use `--capabilities` to request a Feishu domain. They are governed by `public_web_search_approved` and `private_capability_packs` / `allowed_capabilities`, with separate trust-zone approval. See [pluggable business capabilities](./docs/features/business-capabilities.en.md) for installation, Doctor, narrowing, revocation, and human fallback.
+Web Search and private MCP lookups or confirmation-gated actions do not use `--capabilities` to request a Feishu domain. They are governed by `public_web_search_approved` and `private_capability_packs` / `allowed_capabilities`, with separate trust-zone approval. See [pluggable business capabilities](./docs/features/business-capabilities.en.md) for installation, Doctor, narrowing, revocation, and human fallback.
 
 Exact scope names can evolve with the Feishu Open Platform and `lark-cli`. Use the current CLI to obtain the authoritative list:
 

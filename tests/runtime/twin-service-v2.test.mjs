@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { LarkGuard } from "../../executor/src/lark-guard.mjs";
+import { CapabilityActionGateway } from "../../runtime/src/capability-action-gateway.mjs";
 import { RuntimeState } from "../../runtime/src/runtime-state.mjs";
 import { projectExecutionFeedback, TwinService } from "../../runtime/src/service.mjs";
 
@@ -1397,6 +1398,169 @@ test("补读游标只在该批消息全部完成后推进", async () => {
       runtimeState.getSupplementCheckpoint("oc_checkpoint"),
       "2026-07-16T10:00:00.000Z"
     );
+  } finally {
+    runtimeState.close();
+  }
+});
+
+test("语义业务动作必须经过准备、本人确认和单次提交", async () => {
+  const runtimeState = state();
+  const publicReplies = [];
+  const privateConfirmations = [];
+  let prepareCalls = 0;
+  let confirmCalls = 0;
+  const guard = new LarkGuard({
+    larkBin: "/opt/homebrew/bin/lark-cli",
+    profile: "example_profile",
+    principalName: "示例负责人",
+    allowedDomains: config().allowed_lark_domains,
+    runner: async (argv) => {
+      publicReplies.push(argv);
+      return { exit_code: 0, stdout: JSON.stringify({ ok: true, data: {} }), stderr: "" };
+    }
+  });
+  const actionGateway = new CapabilityActionGateway({
+    actionCapabilities: [{
+      capability: "fixture.approval.execute",
+      purpose: "准备并确认审批",
+      operations: ["prepare"],
+      risk: "approval",
+      trust_zone: "internal",
+      readiness: "ready",
+      input_description: "审批记录和决定"
+    }],
+    actionAdapters: new Map([["fixture.approval.execute", {
+      async prepare(request) {
+        prepareCalls += 1;
+        assert.deepEqual(request.input, { record_id: "fixture-42", decision: "approve" });
+        return {
+          status: "confirmation-required",
+          preview: { summary: { subject: "合成审批", action: "同意" } },
+          pending_action: {
+            token: "private-oa-token",
+            phrase: "private-oa-phrase"
+          }
+        };
+      },
+      async confirm(payload) {
+        confirmCalls += 1;
+        assert.deepEqual(payload, {
+          token: "private-oa-token",
+          phrase: "private-oa-phrase"
+        });
+        return {
+          status: "complete",
+          data: { status: "approved" },
+          source_refs: []
+        };
+      }
+    }]])
+  });
+  try {
+    const service = new TwinService({
+      config: config(),
+      state: runtimeState,
+      guard,
+      capabilityActionGateway: actionGateway,
+      sendConfirmation: async (request) => {
+        privateConfirmations.push(structuredClone(request));
+        return { status: "complete" };
+      },
+      runCodex: async (input, options) => {
+        assert.equal(
+          options.promptContext.capabilities.some(({ capability }) => (
+            capability === "fixture.approval.execute"
+          )),
+          true
+        );
+        return {
+          event_id: input.event_id,
+          outcome: "confirm",
+          reason: "审批必须由本人确认",
+          response: { mode: "confirmation", text: "建议同意这条审批。" },
+          commands: [],
+          lookup_requests: [],
+          action_requests: [{
+            capability: "fixture.approval.execute",
+            operation: "prepare",
+            input: { record_id: "fixture-42", decision: "approve" },
+            reason: "准备审批"
+          }],
+          source_refs: [input.message_id]
+        };
+      }
+    });
+
+    const requested = await service.handle(event({
+      event_id: "evt-capability-action",
+      message_id: "om-capability-action",
+      text: "请同意这条审批"
+    }));
+    assert.equal(prepareCalls, 1);
+    assert.equal(confirmCalls, 0);
+    assert.equal(requested.confirmations.length, 1);
+    assert.equal(privateConfirmations.length, 1);
+    assert.doesNotMatch(JSON.stringify(privateConfirmations), /private-oa-token|private-oa-phrase/u);
+    assert.equal(requested.response.mode, "confirmation");
+    const confirmationId = requested.confirmations[0].confirmation_id;
+
+    const approved = await service.handle(event({
+      event_id: "evt-capability-confirm",
+      message_id: "om-capability-confirm",
+      chat_id: "oc-principal-p2p",
+      chat_type: "p2p",
+      sender_open_id: "ou_principal",
+      text: `确认 ${confirmationId}`
+    }));
+    assert.equal(approved.resolution.status, "approved");
+    assert.equal(approved.execution.status, "complete");
+    assert.equal(confirmCalls, 1);
+
+    const replayed = await service.handle(event({
+      event_id: "evt-capability-confirm-replay",
+      message_id: "om-capability-confirm-replay",
+      chat_id: "oc-principal-p2p",
+      chat_type: "p2p",
+      sender_open_id: "ou_principal",
+      text: `确认 ${confirmationId}`
+    }));
+    assert.deepEqual(replayed.resolution, {
+      accepted: false,
+      reason: "ALREADY_RESOLVED"
+    });
+    assert.equal(confirmCalls, 1);
+
+    const forged = await service.handle(event({
+      event_id: "evt-capability-confirm-forged",
+      message_id: "om-capability-confirm-forged",
+      chat_id: "oc-principal-p2p",
+      chat_type: "p2p",
+      sender_open_id: "ou_principal",
+      text: "确认 deadbeefdeadbeef"
+    }));
+    assert.equal(forged.reason, "unknown confirmation");
+    assert.equal(confirmCalls, 1);
+    assert.equal(publicReplies.length > 0, true);
+
+    const blockedRequest = await service.handle(event({
+      event_id: "evt-capability-action-frozen",
+      message_id: "om-capability-action-frozen",
+      text: "请再准备一条审批"
+    }));
+    const blockedConfirmationId = blockedRequest.confirmations[0].confirmation_id;
+    runtimeState.setFrozen(true, "fixture freeze before capability confirmation");
+    const blocked = await service.handle(event({
+      event_id: "evt-capability-confirm-frozen",
+      message_id: "om-capability-confirm-frozen",
+      chat_id: "oc-principal-p2p",
+      chat_type: "p2p",
+      sender_open_id: "ou_principal",
+      text: `确认 ${blockedConfirmationId}`
+    }));
+    assert.equal(blocked.resolution.status, "approved");
+    assert.equal(blocked.execution.status, "unavailable");
+    assert.equal(blocked.notification, null);
+    assert.equal(confirmCalls, 1);
   } finally {
     runtimeState.close();
   }
