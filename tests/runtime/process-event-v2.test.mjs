@@ -65,6 +65,21 @@ test("AI 决定业务语义，可信运行时只添加统一助理标识", async
   assert.deepEqual(result.executable_commands, []);
 });
 
+test("AI 正文自带裸助理称谓时运行时不会重复显示前缀", async () => {
+  const result = await processEvent(event(), {
+    config: config(),
+    runtimeState: { getRuntimeState: () => ({ frozen: false }) },
+    runCodex: async () => decision({
+      response: {
+        mode: "representative",
+        text: "AI助理：这个方案可以继续推进。"
+      }
+    })
+  });
+
+  assert.equal(result.response.text, "🤖 AI助理：这个方案可以继续推进。");
+});
+
 test("没有后续能力请求的最终回复仍必须包含有效回复模式", async () => {
   await assert.rejects(processEvent(event(), {
     config: config(),
