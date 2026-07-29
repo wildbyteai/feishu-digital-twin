@@ -312,6 +312,53 @@ function projectTrustedContext(trustZone, trustedContext) {
     : undefined;
 }
 
+function trustedRequestSourceRefs(request, trustedContext) {
+  const currentMessageText = trustedContext?.current_message_text;
+  if (typeof currentMessageText !== "string" || currentMessageText.length === 0) return [];
+  const sourceRefs = new Set();
+  const visit = (value) => {
+    if (typeof value === "string") {
+      let url;
+      try {
+        url = new URL(value);
+      } catch {
+        return;
+      }
+      if (
+        (url.protocol === "http:" || url.protocol === "https:") &&
+        currentMessageText.includes(value)
+      ) {
+        sourceRefs.add(value);
+      }
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+    if (value && typeof value === "object") {
+      for (const item of Object.values(value)) visit(item);
+    }
+  };
+  visit(request.input);
+  return [...sourceRefs];
+}
+
+function supplementTrustedSourceRefs(request, result, trustedContext) {
+  if (
+    !result ||
+    result.status !== "complete" ||
+    (result.source_refs !== undefined && (
+      !Array.isArray(result.source_refs) ||
+      result.source_refs.length > 0
+    ))
+  ) {
+    return result;
+  }
+  const sourceRefs = trustedRequestSourceRefs(request, trustedContext);
+  return sourceRefs.length > 0 ? { ...result, source_refs: sourceRefs } : result;
+}
+
 function lookupTimeout(value) {
   if (!Number.isInteger(value) || value < 1 || value > 120000) {
     throw new TypeError("timeoutMs must be an integer between 1 and 120000");
@@ -471,7 +518,10 @@ export class CapabilityGateway {
         })
       ]);
       if (result === LOOKUP_TIMEOUT) return stableResult(request, "timeout");
-      return normalizeCapabilityAdapterResult(request, result);
+      return normalizeCapabilityAdapterResult(
+        request,
+        supplementTrustedSourceRefs(request, result, trustedContext)
+      );
     } catch {
       return stableResult(request, "failed");
     } finally {
