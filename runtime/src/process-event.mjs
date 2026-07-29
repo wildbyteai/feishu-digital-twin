@@ -305,6 +305,15 @@ function providedLinks(event) {
   ].map(linkEvidenceKey).filter(Boolean));
 }
 
+function isReadableHttpLink(value) {
+  if (typeof value !== "string" || value.length === 0) return false;
+  try {
+    return new Set(["http:", "https:"]).has(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+}
+
 function linkEvidenceKey(value) {
   if (typeof value !== "string" || value.length === 0) return null;
   try {
@@ -505,9 +514,14 @@ export async function processEvent(event, {
     }
 
     const state = runtimeState?.getRuntimeState?.() ?? { frozen: false };
+    const hasReadableCurrentLink = Array.isArray(candidateEvent.links) &&
+      candidateEvent.links.some(isReadableHttpLink);
     if (
-      candidateEvent.signals?.context_unreadable === true ||
-      candidateEvent.signals?.content_unreadable === true
+      candidateEvent.signals?.content_unreadable === true ||
+      (
+        candidateEvent.signals?.context_unreadable === true &&
+        !hasReadableCurrentLink
+      )
     ) {
       return finish(runtimeState, event.event_id, humanContextFallback(
         event,

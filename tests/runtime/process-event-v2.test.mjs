@@ -381,6 +381,83 @@ test("结构化引用没有可读内容时不调用 AI，直接建议原会话�
   assert.deepEqual(result.confirmation_commands, []);
 });
 
+test("当前消息含可读链接时即使引用不可读也继续进入能力路由", async () => {
+  let codexCalls = 0;
+  const lookup = {
+    capability: "fixture.workflow.read",
+    operation: "get",
+    input: { url: "https://example.invalid/workflow" },
+    reason: "读取当前消息中的流程链接"
+  };
+  const result = await processEvent(event({
+    event_id: "evt-readable-link-unreadable-context",
+    chat_type: "p2p",
+    message_id: "om-readable-link-unreadable-context",
+    text: "请查看这个流程：https://example.invalid/workflow",
+    links: ["https://example.invalid/workflow"],
+    parent_message_id: "om-unreadable-parent",
+    reply_to_message_id: "om-unreadable-parent",
+    signals: {
+      context_lookup_required: false,
+      context_unreadable: true
+    },
+    context: [],
+    context_meta: {
+      fetched: true,
+      scope: "reply",
+      count: 0,
+      limit: 20
+    }
+  }), {
+    config: config(),
+    runtimeState: { getRuntimeState: () => ({ frozen: false }) },
+    runCodex: async (input) => {
+      codexCalls += 1;
+      return decision({
+        event_id: input.event_id,
+        response: { mode: "suggestion", text: "我先读取当前消息中的流程链接。" },
+        source_refs: [input.message_id],
+        lookup_requests: [lookup]
+      });
+    }
+  });
+
+  assert.equal(codexCalls, 1);
+  assert.deepEqual(result.lookup_requests, [lookup]);
+  assert.notEqual(result.reason_code, "CONTEXT_UNREADABLE");
+});
+
+test("当前消息只有无效链接时引用不可读仍保持人工兜底", async () => {
+  let codexCalls = 0;
+  const result = await processEvent(event({
+    event_id: "evt-invalid-link-unreadable-context",
+    chat_type: "p2p",
+    message_id: "om-invalid-link-unreadable-context",
+    text: "请查看我回复的内容",
+    links: ["", "not-a-url"],
+    parent_message_id: "om-unreadable-parent",
+    reply_to_message_id: "om-unreadable-parent",
+    signals: {
+      context_lookup_required: false,
+      context_unreadable: true
+    },
+    context: []
+  }), {
+    config: config(),
+    runtimeState: { getRuntimeState: () => ({ frozen: false }) },
+    runCodex: async (input) => {
+      codexCalls += 1;
+      return decision({
+        event_id: input.event_id,
+        source_refs: [input.message_id]
+      });
+    }
+  });
+
+  assert.equal(codexCalls, 0);
+  assert.equal(result.reason_code, "CONTEXT_UNREADABLE");
+});
+
 test("当前消息载荷不可读时不调用 AI，直接建议人工处理", async () => {
   let codexCalls = 0;
   const result = await processEvent(event({
