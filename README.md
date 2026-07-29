@@ -120,7 +120,7 @@ npx --yes github:wildbyteai/feishu-digital-twin setup --help
 
 新实例默认使用 `message_scope=bot_only`，本机业务域至少包含 `im,base`，其中 `base` 只服务于强制控制台。不要默认申请 `all`，也不要申请与所选能力无关的组织管理或成员管理权限。
 
-Web Search 和私有 MCP 读取不通过 `--capabilities` 申请飞书 domain。它们分别由 `public_web_search_approved` 和 `private_capability_packs` / `allowed_capabilities` 控制，并经过独立信任域确认；安装、Doctor、收紧、撤销与人工兜底见[可插拔业务能力](./docs/features/business-capabilities.md)。
+Web Search 和私有 MCP 查询/确认动作不通过 `--capabilities` 申请飞书 domain。它们分别由 `public_web_search_approved` 和 `private_capability_packs` / `allowed_capabilities` 控制，并经过独立信任域确认；安装、Doctor、收紧、撤销与人工兜底见[可插拔业务能力](./docs/features/business-capabilities.md)。
 
 官方 scope 名称可能随 `lark-cli` 和飞书开放平台演进。安装时用当前 CLI 获取准确清单：
 

@@ -10,6 +10,7 @@
   "max_ai_action_rounds": 3,
   "production_data_approved": false,
   "public_web_search_approved": false,
+  "reuse_codex_mcp_servers": false,
   "private_capability_packs": [],
   "allowed_capabilities": [],
   "required_capabilities": [],

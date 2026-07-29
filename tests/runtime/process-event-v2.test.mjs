@@ -172,6 +172,59 @@ test("每轮最多接受一条结构化能力查询", async () => {
   }), /cannot contain more than one query per round/u);
 });
 
+test("需本人确认的语义业务动作独立进入可信运行时", async () => {
+  const action = {
+    capability: "fixture.approval.execute",
+    operation: "prepare",
+    input: { record_id: "fixture-42", decision: "approve" },
+    reason: "准备审批"
+  };
+  const result = await processEvent(event(), {
+    config: config(),
+    runtimeState: { getRuntimeState: () => ({ frozen: false }) },
+    capabilitySnapshot: [{
+      capability: "fixture.approval.execute",
+      purpose: "准备并确认审批",
+      operations: ["prepare"],
+      risk: "approval",
+      trust_zone: "internal",
+      readiness: "ready",
+      input_description: "审批记录和决定"
+    }],
+    runCodex: async () => decision({
+      outcome: "confirm",
+      response: { mode: "confirmation", text: "建议同意这条审批。" },
+      action_requests: [action]
+    })
+  });
+
+  assert.deepEqual(result.action_requests, [action]);
+  assert.equal(result.response.mode, "confirmation");
+  assert.equal(result.executable_commands.length, 0);
+  assert.equal(result.confirmation_commands.length, 0);
+});
+
+test("同一轮不能混用查询、语义业务动作和飞书命令", async () => {
+  await assert.rejects(() => processEvent(event(), {
+    config: config(),
+    runtimeState: { getRuntimeState: () => ({ frozen: false }) },
+    runCodex: async () => decision({
+      lookup_requests: [{
+        capability: "fixture.workflow.read",
+        operation: "get",
+        input: { workflow_id: "fixture-42" },
+        reason: "读取流程"
+      }],
+      action_requests: [{
+        capability: "fixture.approval.execute",
+        operation: "prepare",
+        input: { record_id: "fixture-42" },
+        reason: "准备审批"
+      }]
+    })
+  }), /one semantic capability request/u);
+});
+
 test("代表权冻结时不公开发言或执行动作", async () => {
   const frozen = await processEvent(event(), {
     config: config(),

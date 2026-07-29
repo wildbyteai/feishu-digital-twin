@@ -43,7 +43,11 @@ import {
   loadBaseRuntimeSwitch
 } from "../../runtime/src/base-console.mjs";
 import { CodexInferenceAdapter } from "../../runtime/src/inference-adapter.mjs";
-import { compilePrivateCapabilityPacks } from "../../runtime/src/private-capability-pack.mjs";
+import { createCodexMcpResolver } from "../../runtime/src/codex-mcp-resolver.mjs";
+import {
+  advertisedMcpToolRisks,
+  compilePrivateCapabilityPacks
+} from "../../runtime/src/private-capability-pack.mjs";
 import { PUBLIC_WEB_SEARCH_CAPABILITY } from "../../runtime/src/public-web-search-adapter.mjs";
 import { buildLarkEnvironment } from "../../shared/subprocess-environment.mjs";
 import {
@@ -346,24 +350,39 @@ function capabilityDescriptors(config, privateCapabilities) {
 }
 
 function capabilityIdsFromPacks(packs) {
-  return packs.flatMap(({ capabilities }) => (
-    capabilities.map(({ capability }) => capability)
-  ));
+  return packs.flatMap(({ capabilities, actions = [] }) => [
+    ...capabilities.map(({ capability }) => capability),
+    ...actions.map(({ capability }) => capability)
+  ]);
 }
 
 function capabilityBindings(packs) {
-  return new Map(packs.flatMap((pack) => pack.capabilities.map((capability) => [
-    capability.capability,
-    JSON.stringify({
-      server_ref: pack.server_ref,
-      trust_zone: capability.trust_zone,
-      operations: capability.operations.map(({ operation, tool, input_constraints }) => ({
-        operation,
-        tool,
-        input_constraints
-      }))
-    })
-  ])));
+  return new Map(packs.flatMap((pack) => [
+    ...pack.capabilities.map((capability) => [
+      capability.capability,
+      JSON.stringify({
+        server_ref: pack.server_ref,
+        trust_zone: capability.trust_zone,
+        operations: capability.operations.map(({ operation, tool, input_constraints }) => ({
+          operation,
+          tool,
+          input_constraints
+        }))
+      })
+    ]),
+    ...(pack.actions ?? []).map((action) => [
+      action.capability,
+      JSON.stringify({
+        server_ref: pack.server_ref,
+        trust_zone: action.trust_zone,
+        operation: action.operation,
+        prepare_tool: action.prepare_tool,
+        confirm_tool: action.confirm_tool,
+        input_constraints: action.input_constraints,
+        confirmation: action.confirmation
+      })
+    ])
+  ]));
 }
 
 async function loadCapabilityPackSources(options, packageRoot) {
@@ -496,7 +515,10 @@ async function prepareCapabilityCandidate({
     validated = validateInstanceConfig(configured);
     policy = validateInstalledCapabilityPolicy(
       validated,
-      capabilityDescriptors(validated, compiled.capabilities)
+      capabilityDescriptors(validated, [
+        ...compiled.capabilities,
+        ...compiled.actionCapabilities
+      ])
     );
   } catch {
     throw new ProductError(
@@ -507,11 +529,14 @@ async function prepareCapabilityCandidate({
   const previousAllowed = new Set(current?.allowed_capabilities ?? []);
   const previousBindings = capabilityBindings(currentPacks);
   const targetBindings = capabilityBindings(targetPacks);
-  const internalCapabilities = new Set(targetPacks.flatMap(({ capabilities }) => (
-    capabilities
+  const internalCapabilities = new Set(targetPacks.flatMap(({ capabilities, actions = [] }) => [
+    ...capabilities
+      .filter(({ trust_zone: trustZone }) => trustZone === "internal")
+      .map(({ capability }) => capability),
+    ...actions
       .filter(({ trust_zone: trustZone }) => trustZone === "internal")
       .map(({ capability }) => capability)
-  )));
+  ]));
   const newlyEnabled = policy.allowed_capabilities.filter((capability) => (
     internalCapabilities.has(capability) && (
       !previousAllowed.has(capability) ||
@@ -3038,6 +3063,15 @@ async function updateConfig(root, packageRoot, options, environment, serviceOpti
       "ordinary configuration updates cannot change production data approval"
     );
   }
+  if (
+    candidate.reuse_codex_mcp_servers === true &&
+    current.reuse_codex_mcp_servers !== true
+  ) {
+    throw new ProductError(
+      "CAPABILITY_SETUP_REQUIRED",
+      "enabling Codex MCP reuse requires setup"
+    );
+  }
   const currentPackIds = new Set(current.private_capability_packs ?? []);
   const candidatePackIds = candidate.private_capability_packs ?? [];
   if (candidatePackIds.some((packId) => !currentPackIds.has(packId))) {
@@ -3061,11 +3095,17 @@ async function updateConfig(root, packageRoot, options, environment, serviceOpti
     });
     const currentPolicy = validateInstalledCapabilityPolicy(
       current,
-      capabilityDescriptors(current, currentCompiled.capabilities)
+      capabilityDescriptors(current, [
+        ...currentCompiled.capabilities,
+        ...currentCompiled.actionCapabilities
+      ])
     );
     const candidatePolicy = validateInstalledCapabilityPolicy(
       candidate,
-      capabilityDescriptors(candidate, candidateCompiled.capabilities)
+      capabilityDescriptors(candidate, [
+        ...candidateCompiled.capabilities,
+        ...candidateCompiled.actionCapabilities
+      ])
     );
     const currentAllowed = new Set(currentPolicy.allowed_capabilities);
     if (candidatePolicy.allowed_capabilities.some((capability) => !currentAllowed.has(capability))) {
@@ -3106,28 +3146,6 @@ function summarizeDoctor(health) {
   };
 }
 
-function advertisedToolNames(result) {
-  const tools = Array.isArray(result)
-    ? result
-    : Array.isArray(result?.tools)
-      ? result.tools
-      : null;
-  if (tools === null) return null;
-  if (tools.some((tool) => (
-    !tool ||
-    typeof tool !== "object" ||
-    Array.isArray(tool) ||
-    typeof tool.name !== "string" ||
-    tool.name.length === 0
-  ))) return null;
-  return new Set(tools
-    .filter((tool) => (
-      tool.annotations?.readOnlyHint === true &&
-      tool.annotations?.destructiveHint !== true
-    ))
-    .map(({ name }) => name));
-}
-
 async function boundedCapabilityDoctorCall(callback) {
   let timer;
   try {
@@ -3147,17 +3165,37 @@ async function boundedCapabilityDoctorCall(callback) {
   }
 }
 
-async function capabilitiesDoctor(configPath, config, resolveCapabilityServer) {
+function configuredCapabilityResolver(config, environment, override) {
+  if (typeof override === "function") return override;
+  return config.reuse_codex_mcp_servers === true
+    ? createCodexMcpResolver({
+        codexBin: config.codex_bin ?? "codex",
+        environment,
+        timeoutMs: Math.min(config.codex_timeout_ms ?? 120000, 120000)
+      })
+    : async () => undefined;
+}
+
+async function capabilitiesDoctor(configPath, config, resolveCapabilityServer, environment) {
   try {
     const packs = await loadPrivateCapabilityPacks(configPath, config);
+    const resolveServer = configuredCapabilityResolver(
+      config,
+      environment,
+      resolveCapabilityServer
+    );
     const compiled = compilePrivateCapabilityPacks({ packs, servers: new Map() });
+    const compiledPrivateCapabilities = [
+      ...compiled.capabilities,
+      ...compiled.actionCapabilities
+    ];
     const policy = validateInstalledCapabilityPolicy(
       config,
-      capabilityDescriptors(config, compiled.capabilities)
+      capabilityDescriptors(config, compiledPrivateCapabilities)
     );
     const required = new Set(policy.required_capabilities);
     const allowed = new Set(policy.allowed_capabilities);
-    const privateCapabilities = compiled.capabilities.filter(({ capability }) => (
+    const privateCapabilities = compiledPrivateCapabilities.filter(({ capability }) => (
       allowed.has(capability)
     ));
     const publicWebSearchAllowed = config.public_web_search_approved === true &&
@@ -3167,39 +3205,47 @@ async function capabilitiesDoctor(configPath, config, resolveCapabilityServer) {
     }
 
     const serverReadiness = new Map();
-    const allowedPacks = packs.filter(({ capabilities }) => (
-      capabilities.some(({ capability }) => allowed.has(capability))
+    const allowedPacks = packs.filter(({ capabilities, actions = [] }) => (
+      [...capabilities, ...actions].some(({ capability }) => allowed.has(capability))
     ));
     for (const pack of allowedPacks) {
       if (serverReadiness.has(pack.server_ref)) continue;
       const startedAt = Date.now();
       const resolved = await boundedCapabilityDoctorCall(
-        () => resolveCapabilityServer(pack.server_ref)
+        () => resolveServer(pack.server_ref)
       );
       const server = resolved.ok === true ? resolved.value : undefined;
-      let tools = null;
+      let toolRisks = null;
       if (
         typeof server?.callTool === "function" &&
         typeof server?.listTools === "function"
       ) {
         const listed = await boundedCapabilityDoctorCall(() => server.listTools());
-        if (listed.ok === true) tools = advertisedToolNames(listed.value);
+        if (listed.ok === true) toolRisks = advertisedMcpToolRisks(listed.value);
       }
       serverReadiness.set(pack.server_ref, {
         latency_ms: Math.max(0, Date.now() - startedAt),
-        tools
+        toolRisks
       });
     }
 
     const capabilities = privateCapabilities.map(({ capability }) => {
-      const pack = allowedPacks.find(({ capabilities: declarations }) => (
-        declarations.some((declaration) => declaration.capability === capability)
+      const pack = allowedPacks.find(({ capabilities: declarations, actions = [] }) => (
+        [...declarations, ...actions].some((declaration) => declaration.capability === capability)
       ));
-      const declaration = pack.capabilities.find((item) => item.capability === capability);
+      const declaration = [
+        ...pack.capabilities,
+        ...(pack.actions ?? [])
+      ].find((item) => item.capability === capability);
       const readiness = serverReadiness.get(pack.server_ref);
-      const declaredTools = declaration.operations.map(({ tool }) => tool);
-      const ready = readiness.tools !== null && declaredTools.every((tool) => (
-        readiness.tools.has(tool)
+      const declaredTools = Object.hasOwn(declaration, "prepare_tool")
+        ? [
+            [declaration.prepare_tool, "prepare"],
+            [declaration.confirm_tool, "write"]
+          ]
+        : declaration.operations.map(({ tool }) => [tool, "read"]);
+      const ready = readiness.toolRisks !== null && declaredTools.every(([tool, risk]) => (
+        readiness.toolRisks.get(tool) === risk
       ));
       return {
         capability,
@@ -3344,7 +3390,7 @@ async function doctor(
   {
     checkServices = true,
     requirePrimaryBaseMasterSwitch = false,
-    resolveCapabilityServer = async () => undefined
+    resolveCapabilityServer
   } = {}
 ) {
   const installation = await readInstallation(root);
@@ -3399,7 +3445,8 @@ async function doctor(
     checks.capabilities = await capabilitiesDoctor(
       configPath,
       config,
-      resolveCapabilityServer
+      resolveCapabilityServer,
+      environment
     );
     const lark = larkAuthDoctor(
       config.lark_cli_bin ?? "lark-cli",
@@ -3467,7 +3514,7 @@ async function doctor(
 
 async function requireDoctorReady(root, serviceOptions, options, environment, {
   requirePrimaryBaseMasterSwitch = false,
-  resolveCapabilityServer = async () => undefined
+  resolveCapabilityServer
 } = {}) {
   const health = await doctor(root, serviceOptions, options, environment, {
     checkServices: false,
@@ -3789,7 +3836,7 @@ export async function runProductCli({
   stdout = process.stdout,
   stderr = process.stderr,
   environment = process.env,
-  resolveCapabilityServer = async () => undefined
+  resolveCapabilityServer
 }) {
   try {
     const { options, positionals } = parseArguments(argv);

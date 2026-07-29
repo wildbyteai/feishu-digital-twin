@@ -90,6 +90,10 @@
       "description": "Explicit deployment approval for public Web Search. Missing or false keeps ordinary business inference offline.",
       "type": "boolean"
     },
+    "reuse_codex_mcp_servers": {
+      "description": "Explicitly reuse only the exact Codex MCP server references declared by installed private capability packs.",
+      "type": "boolean"
+    },
     "production_enabled": {
       "description": "Deprecated schema v1 local runtime switch. Schema v2 uses control instead.",
       "deprecated": true,

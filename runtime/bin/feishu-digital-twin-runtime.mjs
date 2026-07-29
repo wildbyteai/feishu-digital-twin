@@ -9,6 +9,8 @@ import {
   loadBaseConsole
 } from "../src/base-console.mjs";
 import { CapabilityGateway } from "../src/capability-gateway.mjs";
+import { CapabilityActionGateway } from "../src/capability-action-gateway.mjs";
+import { createCodexMcpResolver } from "../src/codex-mcp-resolver.mjs";
 import {
   loadInstanceConfig,
   loadPrivateCapabilityRegistry,
@@ -36,9 +38,20 @@ function trustedProtectedValues(config) {
 }
 
 async function loadRuntimeCapabilities(configPath, config) {
-  const registry = await loadPrivateCapabilityRegistry(configPath, config);
+  const resolveServer = config.reuse_codex_mcp_servers === true
+    ? createCodexMcpResolver({
+        codexBin: config.codex_bin ?? "codex",
+        environment: process.env,
+        timeoutMs: Math.min(config.codex_timeout_ms ?? 120000, 120000)
+      })
+    : async () => undefined;
+  const registry = await loadPrivateCapabilityRegistry(configPath, config, {
+    resolveServer
+  });
   const capabilities = [...registry.capabilities];
   const adapters = new Map(registry.adapters);
+  const actionCapabilities = [...registry.actionCapabilities];
+  const actionAdapters = new Map(registry.actionAdapters);
   const timeoutMs = Math.min(config.codex_timeout_ms ?? 120000, 120000);
 
   if (config.public_web_search_approved === true) {
@@ -53,12 +66,18 @@ async function loadRuntimeCapabilities(configPath, config) {
     );
   }
 
-  const policy = validateInstalledCapabilityPolicy(config, capabilities);
+  const policy = validateInstalledCapabilityPolicy(config, [
+    ...capabilities,
+    ...actionCapabilities
+  ]);
   return {
     allowedCapabilities: policy.allowed_capabilities,
     gateway: capabilities.length === 0
       ? undefined
-      : new CapabilityGateway({ capabilities, adapters, timeoutMs })
+      : new CapabilityGateway({ capabilities, adapters, timeoutMs }),
+    actionGateway: actionCapabilities.length === 0
+      ? undefined
+      : new CapabilityActionGateway({ actionCapabilities, actionAdapters })
   };
 }
 
@@ -68,7 +87,7 @@ async function createRuntime(configPath, databasePath) {
   if (loadedConfig.production_data_approved !== true) {
     throw new Error("runtime requires production_data_approved=true");
   }
-  const { allowedCapabilities, gateway } = await loadRuntimeCapabilities(
+  const { allowedCapabilities, gateway, actionGateway } = await loadRuntimeCapabilities(
     configPath,
     loadedConfig
   );
@@ -100,6 +119,7 @@ async function createRuntime(configPath, databasePath) {
     refreshConfig: createBaseConsoleRefresher(staticConfig, { initialConfig: config }),
     reader,
     capabilityGateway: gateway,
+    capabilityActionGateway: actionGateway,
     inferenceAdapter: new CodexInferenceAdapter({
       codexBin: staticConfig.codex_bin,
       codexEnvironmentRoot: staticConfig.codex_environment_root,

@@ -42,6 +42,13 @@ function confirmationId(eventId, commandHash, requiresYes) {
   return createHash("sha256").update(`${eventId}:${commandHash}:${kind}`).digest("hex").slice(0, 16);
 }
 
+function capabilityConfirmationId(eventId, actionId) {
+  return createHash("sha256")
+    .update(`${eventId}:${actionId}:capability`)
+    .digest("hex")
+    .slice(0, 16);
+}
+
 function executionHash(scope, commandHash) {
   return createHash("sha256").update(`${scope}:${commandHash}`).digest("hex");
 }
@@ -111,6 +118,22 @@ function highRiskDecision(decision, principalName) {
       mode: "confirmation",
       text: `${authorityLabel("confirmation", principalName)}${body}飞书已将相关动作标记为高风险，确认前不会执行。`
     },
+    executable_commands: [],
+    confirmation_commands: []
+  };
+}
+
+function capabilityActionConfirmationDecision(decision, principalName) {
+  const body = stripAuthorityLabel(decision.response?.text ?? "建议执行该业务动作。");
+  return {
+    ...decision,
+    outcome: "confirm",
+    response: {
+      mode: "confirmation",
+      text: `${authorityLabel("confirmation", principalName)}${body}`
+    },
+    lookup_requests: [],
+    action_requests: [],
     executable_commands: [],
     confirmation_commands: []
   };
@@ -394,6 +417,7 @@ export class TwinService {
     guard,
     reader,
     capabilityGateway,
+    capabilityActionGateway,
     runCodex = runCodexDecision,
     sendConfirmation = sendPrivateConfirmation,
     refreshProductionEnabled = async () => config.production_enabled === true,
@@ -411,11 +435,22 @@ export class TwinService {
     )) {
       throw new TypeError("capabilityGateway.snapshot and capabilityGateway.lookup are required");
     }
+    if (capabilityActionGateway !== undefined && (
+      typeof capabilityActionGateway?.snapshot !== "function" ||
+      typeof capabilityActionGateway?.prepare !== "function" ||
+      typeof capabilityActionGateway?.confirm !== "function" ||
+      typeof capabilityActionGateway?.cancel !== "function"
+    )) {
+      throw new TypeError(
+        "capabilityActionGateway snapshot, prepare, confirm and cancel are required"
+      );
+    }
     this.config = config;
     this.state = state;
     this.guard = guard;
     this.reader = reader;
     this.capabilityGateway = capabilityGateway;
+    this.capabilityActionGateway = capabilityActionGateway;
     this.runCodex = runCodex;
     this.sendConfirmation = sendConfirmation;
     this.refreshProductionEnabled = refreshProductionEnabled;
@@ -514,6 +549,112 @@ export class TwinService {
     return { confirmation_id: id, delivery };
   }
 
+  async requestCapabilityConfirmation(event, request, prepared, {
+    sourceReplyIdentity = replyIdentity(event)
+  } = {}) {
+    const actionId = prepared?.pending_action?.action_id;
+    if (typeof actionId !== "string" || actionId.length === 0) {
+      throw new TypeError("prepared capability action_id is required");
+    }
+    const id = capabilityConfirmationId(event.event_id, actionId);
+    const expiresAt = new Date(Date.parse(this.clock()) + 10 * 60 * 1000).toISOString();
+    const existing = this.state.getConfirmation(id);
+    if (!existing) {
+      this.state.createConfirmation({
+        confirmation_id: id,
+        kind: "capability",
+        action_id: actionId,
+        operator_open_id: this.config.principal.open_id,
+        expires_at: expiresAt,
+        reason: request.reason,
+        source_event_id: event.event_id,
+        source_chat_id: event.chat_id,
+        source_message_id: event.message_id,
+        source_reply_identity: sourceReplyIdentity
+      });
+    }
+    const delivery = await this.sendConfirmation({
+      larkBin: this.config.lark_cli_bin ?? "lark-cli",
+      profile: this.config.profile,
+      principalOpenId: this.config.principal.open_id,
+      principalName: this.config.principal.name,
+      confirmationId: id,
+      reason: request.reason,
+      preview: prepared.preview ?? null,
+      productionEnabled: this.config.production_enabled === true
+    });
+    if (delivery.status === "failed") {
+      this.capabilityActionGateway?.cancel({ action_id: actionId });
+      throw new Error("private confirmation delivery failed");
+    }
+    return { confirmation_id: id, delivery };
+  }
+
+  async handleCapabilityConfirmationReply(event, confirmation, decision) {
+    const id = confirmation.confirmation_id;
+    const resolution = this.state.resolveConfirmation({
+      confirmation_id: id,
+      action_id: confirmation.action_id,
+      operator_open_id: event.sender_open_id,
+      event_id: event.event_id,
+      decision
+    });
+    if (!resolution.accepted) {
+      return {
+        event_id: event.event_id,
+        outcome: "confirmation",
+        reason_code: DECISION_REASON_CODES.confirmationResult,
+        resolution
+      };
+    }
+
+    const rejected = resolution.status === "rejected";
+    const frozen = this.state.getRuntimeState().frozen;
+    const execution = rejected
+      ? null
+      : frozen
+        ? { status: "unavailable", capability: "unknown", operation: "unknown" }
+      : this.capabilityActionGateway
+        ? await this.capabilityActionGateway.confirm({ action_id: confirmation.action_id })
+        : { status: "unavailable", capability: "unknown", operation: "unknown" };
+    if (rejected || frozen) {
+      this.capabilityActionGateway?.cancel({ action_id: confirmation.action_id });
+    }
+    const reason = confirmation.reason ?? "业务动作";
+    const notification = confirmation.source_message_id && !frozen
+      ? await this.executeCommand({
+          argv: [
+            "im",
+            "+messages-reply",
+            "--message-id",
+            confirmation.source_message_id,
+            "--text",
+            rejected
+              ? `${authorityLabel("suggestion", this.config.principal.name)}${this.config.principal.name}未确认“${reason}”，该事项不执行。`
+              : execution.status === "complete"
+                ? `${authorityLabel("representative", this.config.principal.name)}${this.config.principal.name}已确认“${reason}”，相关动作已执行。`
+                : `${authorityLabel("suggestion", this.config.principal.name)}${this.config.principal.name}已确认“${reason}”，但动作未完成，请人工检查。`,
+            "--idempotency-key",
+            `twin-capability-confirm-result-${id}`
+          ],
+          reason: "公开业务动作确认结果"
+        }, {
+          executionScope: `${confirmation.source_event_id ?? id}:capability-result`,
+          identity: confirmation.source_reply_identity
+        })
+      : null;
+    this.state.clearConfirmationPayload(id);
+    return {
+      event_id: event.event_id,
+      outcome: "confirmation",
+      reason_code: DECISION_REASON_CODES.confirmationResult,
+      resolution,
+      execution,
+      notification,
+      confirmations: []
+    };
+  }
+
   async handleConfirmationReply(event, match) {
     const id = match[2];
     const confirmation = this.state.getConfirmation(id);
@@ -526,6 +667,9 @@ export class TwinService {
       };
     }
     const decision = match[1] === "确认" ? "approve" : "reject";
+    if (confirmation.kind === "capability") {
+      return this.handleCapabilityConfirmationReply(event, confirmation, decision);
+    }
     const actionIdentity = replyActionIdentity(
       confirmation.action,
       confirmation.source_reply_identity
@@ -729,10 +873,16 @@ export class TwinService {
       const confirmations = [];
       const feedback = [];
       const lookups = [];
+      const capabilityActions = [];
       const silentSystemEvent = isSilentSystemEvent(event, this.config);
-      const capabilitySnapshot = silentSystemEvent
+      const capabilitySnapshot = silentSystemEvent || (
+        this.capabilityGateway === undefined && this.capabilityActionGateway === undefined
+      )
         ? undefined
-        : this.capabilityGateway?.snapshot();
+        : [
+            ...(this.capabilityGateway?.snapshot() ?? []),
+            ...(this.capabilityActionGateway?.snapshot() ?? [])
+          ];
       const capabilityTrustZones = new Map((capabilitySnapshot ?? []).map((capability) => [
         capability.capability,
         capability.trust_zone
@@ -793,11 +943,15 @@ export class TwinService {
         if (silentSystemEvent && (decision.lookup_requests ?? []).length > 0) {
           throw new Error("silent system event cannot request capability lookup");
         }
+        if (silentSystemEvent && (decision.action_requests ?? []).length > 0) {
+          throw new Error("silent system event cannot request capability action");
+        }
 
         if (retryingReply) {
           decision = {
             ...decision,
             lookup_requests: [],
+            action_requests: [],
             executable_commands: [],
             confirmation_commands: []
           };
@@ -808,8 +962,9 @@ export class TwinService {
           lookups.length > 0 &&
           lookups.at(-1).result.status !== "complete" &&
           (
-            (decision.lookup_requests ?? []).length > 0 ||
-            (decision.executable_commands ?? []).length > 0 ||
+              (decision.lookup_requests ?? []).length > 0 ||
+              (decision.action_requests ?? []).length > 0 ||
+              (decision.executable_commands ?? []).length > 0 ||
             (decision.confirmation_commands ?? []).length > 0
           )
         ) {
@@ -834,7 +989,8 @@ export class TwinService {
 
         let commands = decision.executable_commands ?? [];
         const lookupRequests = decision.lookup_requests ?? [];
-        if (lookupRequests.length === 0) {
+        const actionRequests = decision.action_requests ?? [];
+        if (lookupRequests.length === 0 && actionRequests.length === 0) {
           for (const command of decision.confirmation_commands ?? []) {
             confirmations.push(await this.requestConfirmation(event, command, {
               requiresYes: false
@@ -863,8 +1019,8 @@ export class TwinService {
         if (silentSystemEvent && commands.some(isForbiddenDailyImCommand)) {
           throw new Error("silent system event cannot send messages");
         }
-        if ((commands.length === 0 && lookupRequests.length === 0) || (
-          decision.outcome === "draft" && lookupRequests.length === 0
+        if ((commands.length === 0 && lookupRequests.length === 0 && actionRequests.length === 0) || (
+          decision.outcome === "draft" && lookupRequests.length === 0 && actionRequests.length === 0
         )) {
           if (
             silentSystemEvent &&
@@ -914,6 +1070,51 @@ export class TwinService {
         ) {
           continue;
         }
+        let capabilityConfirmation = false;
+        for (const request of actionRequests) {
+          const requestTrustZone = capabilityTrustZones.get(request.capability);
+          const crossTrustZone = lookupTrustZone !== undefined &&
+            requestTrustZone !== undefined &&
+            requestTrustZone !== lookupTrustZone;
+          if (lookupTrustZone === undefined && requestTrustZone !== undefined) {
+            lookupTrustZone = requestTrustZone;
+          }
+          const prepared = crossTrustZone
+            ? {
+                capability: request.capability,
+                operation: request.operation,
+                status: "denied"
+              }
+            : this.capabilityActionGateway
+              ? await this.capabilityActionGateway.prepare(request)
+              : {
+                  capability: request.capability,
+                  operation: request.operation,
+                  status: "unavailable"
+                };
+          capabilityActions.push({
+            round: actionRounds,
+            request: structuredClone(request),
+            result: Object.fromEntries(Object.entries({
+              capability: prepared.capability,
+              operation: prepared.operation,
+              status: prepared.status,
+              preview: prepared.preview
+            }).filter(([, value]) => value !== undefined))
+          });
+          if (prepared.status === "confirmation-required") {
+            confirmations.push(await this.requestCapabilityConfirmation(event, request, prepared));
+            decision = capabilityActionConfirmationDecision(
+              decision,
+              this.config.principal.name
+            );
+            capabilityConfirmation = true;
+            break;
+          }
+          lookups.push(capabilityFeedback(request, prepared, actionRounds));
+        }
+        if (capabilityConfirmation) break;
+        if (actionRequests.length > 0) continue;
         for (const command of decision.confirmation_commands ?? []) {
           confirmations.push(await this.requestConfirmation(event, command, {
             requiresYes: false
@@ -1012,6 +1213,7 @@ export class TwinService {
         lookups.length > 0 &&
         lookups.at(-1).result.status !== "complete" &&
         (decision.lookup_requests ?? []).length === 0 &&
+        (decision.action_requests ?? []).length === 0 &&
         (decision.executable_commands ?? []).length === 0 &&
         (decision.confirmation_commands ?? []).length === 0
       ) {
@@ -1073,6 +1275,7 @@ export class TwinService {
         ...decision,
         executions,
         lookups,
+        capability_actions: capabilityActions,
         confirmations,
         reply_retry: retryingReply,
         diagnostics: contextDiagnostics(hydrated, decision)

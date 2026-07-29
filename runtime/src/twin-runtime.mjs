@@ -24,6 +24,36 @@ function capabilityGatewayForConfig(gateway, config) {
   };
 }
 
+function capabilityActionGatewayForConfig(gateway, config) {
+  if (gateway === undefined || !Array.isArray(config.allowed_capabilities)) return gateway;
+  const allowed = new Set(config.allowed_capabilities);
+  return {
+    snapshot() {
+      return gateway.snapshot().filter(({ capability }) => allowed.has(capability));
+    },
+    async prepare(request) {
+      if (!allowed.has(request?.capability)) {
+        return {
+          capability: typeof request?.capability === "string" && request.capability.length > 0
+            ? request.capability
+            : "unknown",
+          operation: typeof request?.operation === "string" && request.operation.length > 0
+            ? request.operation
+            : "unknown",
+          status: "unavailable"
+        };
+      }
+      return gateway.prepare(request);
+    },
+    async confirm(pendingAction) {
+      return gateway.confirm(pendingAction, { allowedCapabilities: allowed });
+    },
+    cancel(pendingAction) {
+      return gateway.cancel(pendingAction);
+    }
+  };
+}
+
 export class TwinRuntime {
   constructor({
     inferenceAdapter,
@@ -59,6 +89,10 @@ export class TwinRuntime {
       guard,
       capabilityGateway: capabilityGatewayForConfig(
         this.serviceOptions.capabilityGateway,
+        config
+      ),
+      capabilityActionGateway: capabilityActionGatewayForConfig(
+        this.serviceOptions.capabilityActionGateway,
         config
       ),
       ...(this.usesRuntimeSnapshots

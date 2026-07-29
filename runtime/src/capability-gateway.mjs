@@ -392,7 +392,7 @@ function stableResult(request, status, values = {}) {
   return result;
 }
 
-function normalizeAdapterResult(request, result) {
+export function normalizeCapabilityAdapterResult(request, result) {
   if (!result || typeof result !== "object" || Array.isArray(result)) {
     return stableResult(request, "failed");
   }
@@ -471,7 +471,7 @@ export class CapabilityGateway {
         })
       ]);
       if (result === LOOKUP_TIMEOUT) return stableResult(request, "timeout");
-      return normalizeAdapterResult(request, result);
+      return normalizeCapabilityAdapterResult(request, result);
     } catch {
       return stableResult(request, "failed");
     } finally {

@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { LarkGuard } from "../../executor/src/lark-guard.mjs";
+import { CapabilityActionGateway } from "../../runtime/src/capability-action-gateway.mjs";
 import {
   CapabilityGateway,
   FakeCapabilityAdapter
@@ -303,6 +304,85 @@ test("TwinRuntime 每条消息同步收紧 AI 可见能力和可信 lookup", asy
     ]);
     assert.equal(narrowed.lookups[0].result.status, "unavailable");
     assert.equal(publicCalls, 0);
+  } finally {
+    runtimeState.close();
+  }
+});
+
+test("待确认业务动作在确认前被动态收紧时不再提交", async () => {
+  const actionCapability = {
+    capability: "example.approval.execute",
+    purpose: "准备并确认合成审批",
+    operations: ["prepare"],
+    risk: "approval",
+    trust_zone: "internal",
+    readiness: "ready",
+    input_description: "合成审批记录"
+  };
+  let confirmCalls = 0;
+  const actionGateway = new CapabilityActionGateway({
+    actionCapabilities: [actionCapability],
+    actionAdapters: new Map([[actionCapability.capability, {
+      async prepare() {
+        return {
+          status: "confirmation-required",
+          preview: { subject: "合成审批" },
+          pending_action: { proof: "fixture", phrase: "确认审批" }
+        };
+      },
+      async confirm() {
+        confirmCalls += 1;
+        return { status: "complete", data: { ok: true }, source_refs: [] };
+      }
+    }]])
+  });
+  const original = config({ allowed_capabilities: [actionCapability.capability] });
+  const narrowed = { ...original, allowed_capabilities: [] };
+  const runtimeState = state();
+  const snapshots = [original, narrowed];
+  try {
+    const runtime = new TwinRuntime({
+      config: original,
+      state: runtimeState,
+      guard: guard(original),
+      createGuard: guard,
+      refreshConfig: async () => snapshots.shift(),
+      capabilityActionGateway: actionGateway,
+      sendConfirmation: async () => ({ status: "complete" }),
+      inferenceAdapter: new FakeInferenceAdapter(async (request) => ({
+        event_id: request.event.event_id,
+        outcome: "confirm",
+        reason: "准备审批",
+        response: { mode: "confirmation", text: "建议执行合成审批。" },
+        commands: [],
+        lookup_requests: [],
+        action_requests: [{
+          capability: actionCapability.capability,
+          operation: "prepare",
+          input: { record_id: "fixture-42" },
+          reason: "准备审批"
+        }],
+        source_refs: [request.event.message_id]
+      }))
+    });
+
+    const requested = await runtime.handle(event({
+      event_id: "evt_action_prepare",
+      message_id: "om_action_prepare"
+    }));
+    const confirmationId = requested.confirmations[0].confirmation_id;
+    const result = await runtime.handle(event({
+      event_id: "evt_action_confirm",
+      message_id: "om_action_confirm",
+      chat_id: "oc_principal_p2p",
+      chat_type: "p2p",
+      sender_open_id: original.principal.open_id,
+      text: `确认 ${confirmationId}`
+    }));
+
+    assert.equal(result.resolution.status, "approved");
+    assert.equal(result.execution.status, "unavailable");
+    assert.equal(confirmCalls, 0);
   } finally {
     runtimeState.close();
   }

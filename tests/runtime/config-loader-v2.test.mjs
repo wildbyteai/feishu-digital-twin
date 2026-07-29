@@ -106,6 +106,30 @@ test("公开 Web Search 必须单独显式授权，旧配置缺省时保持关�
   );
 });
 
+test("精确复用 Codex MCP 必须由实例配置显式开启", async () => {
+  const legacy = validateInstanceConfig(config());
+  assert.equal(Object.hasOwn(legacy, "reuse_codex_mcp_servers"), false);
+  assert.equal(validateInstanceConfig(config({
+    reuse_codex_mcp_servers: false
+  })).reuse_codex_mcp_servers, false);
+  assert.equal(validateInstanceConfig(config({
+    private_capability_packs: ["example.records"],
+    allowed_capabilities: ["example.records.read"],
+    reuse_codex_mcp_servers: true
+  })).reuse_codex_mcp_servers, true);
+  assert.throws(
+    () => validateInstanceConfig(config({ reuse_codex_mcp_servers: true })),
+    /requires private capability packs/u
+  );
+  assert.throws(
+    () => validateInstanceConfig(config({ reuse_codex_mcp_servers: "yes" })),
+    /reuse_codex_mcp_servers must be a boolean/u
+  );
+
+  const schema = JSON.parse(await readFile(instanceConfigSchema, "utf8"));
+  assert.equal(schema.properties.reuse_codex_mcp_servers.type, "boolean");
+});
+
 test("本机配置声明私有能力包、最大能力与 required 子集且旧配置保持兼容", async () => {
   const legacy = config();
   const validatedLegacy = validateInstanceConfig(legacy);

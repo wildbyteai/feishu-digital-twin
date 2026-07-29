@@ -284,7 +284,9 @@ export class RuntimeState {
           );
           CREATE TABLE IF NOT EXISTS confirmations (
             confirmation_id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL DEFAULT 'command' CHECK (kind IN ('command', 'capability')),
             action_hash TEXT NOT NULL,
+            action_id TEXT,
             operator_open_id TEXT NOT NULL,
             expires_at TEXT NOT NULL,
             action_json TEXT,
@@ -332,6 +334,8 @@ export class RuntimeState {
           "PRAGMA table_info(confirmations)"
         ).all().map((column) => column.name));
         for (const [name, type] of [
+          ["kind", "TEXT NOT NULL DEFAULT 'command'"],
+          ["action_id", "TEXT"],
           ["action_json", "TEXT"],
           ["reason", "TEXT"],
           ["requires_yes", "INTEGER NOT NULL DEFAULT 0"],
@@ -623,7 +627,9 @@ export class RuntimeState {
 
   createConfirmation({
     confirmation_id,
-    action_hash,
+    kind = "command",
+    action_hash = null,
+    action_id = null,
     operator_open_id,
     expires_at,
     action = null,
@@ -635,7 +641,26 @@ export class RuntimeState {
     source_reply_identity = "user"
   }) {
     requireText(confirmation_id, "confirmation_id");
-    requireText(action_hash, "action_hash");
+    if (kind !== "command" && kind !== "capability") {
+      throw new TypeError("kind must be command or capability");
+    }
+    if (kind === "command") {
+      requireText(action_hash, "action_hash");
+      if (action_id !== null) {
+        throw new TypeError("command confirmation cannot store a capability action reference");
+      }
+    } else {
+      requireText(action_id, "action_id");
+      if (action_hash !== null) {
+        throw new TypeError("capability confirmation cannot store an action_hash");
+      }
+      if (action !== null) {
+        throw new TypeError("capability confirmation cannot store a command action");
+      }
+      if (requires_yes) {
+        throw new TypeError("capability confirmation cannot require command --yes");
+      }
+    }
     requireText(operator_open_id, "operator_open_id");
     requireTimestamp(expires_at, "expires_at");
     const now = this.now();
@@ -659,13 +684,16 @@ export class RuntimeState {
     }
     this.database.prepare(`
       INSERT INTO confirmations (
-        confirmation_id, action_hash, operator_open_id, expires_at,
+        confirmation_id, kind, action_hash, action_id,
+        operator_open_id, expires_at,
         action_json, reason, requires_yes, source_event_id, source_chat_id, source_message_id,
         source_reply_identity, status, created_at, resolved_at, resolved_event_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL, NULL)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL, NULL)
     `).run(
       confirmation_id,
-      action_hash,
+      kind,
+      kind === "command" ? action_hash : action_id,
+      action_id,
       this.operatorKey(operator_open_id),
       expires_at,
       action === null ? null : JSON.stringify(action),
@@ -682,7 +710,8 @@ export class RuntimeState {
   getConfirmation(confirmationId) {
     requireText(confirmationId, "confirmationId");
     const row = this.database.prepare(`
-      SELECT confirmation_id, action_hash, operator_open_id, expires_at,
+      SELECT confirmation_id, kind, action_hash, action_id,
+             operator_open_id, expires_at,
              action_json, reason, requires_yes, source_event_id, source_chat_id, source_message_id,
              source_reply_identity, status, created_at, resolved_at, resolved_event_id
       FROM confirmations WHERE confirmation_id = ?
@@ -690,6 +719,7 @@ export class RuntimeState {
     if (!row) return null;
     return {
       ...row,
+      action_hash: row.kind === "command" ? row.action_hash : null,
       requires_yes: row.requires_yes === 1,
       action: row.action_json === null ? null : JSON.parse(row.action_json)
     };
@@ -697,13 +727,18 @@ export class RuntimeState {
 
   resolveConfirmation({
     confirmation_id,
-    action_hash,
+    action_hash = null,
+    action_id = null,
     operator_open_id,
     event_id,
     decision
   }) {
     requireText(confirmation_id, "confirmation_id");
-    requireText(action_hash, "action_hash");
+    const hasActionHash = typeof action_hash === "string" && action_hash.length > 0;
+    const hasActionId = typeof action_id === "string" && action_id.length > 0;
+    if (hasActionHash === hasActionId) {
+      throw new TypeError("exactly one of action_hash or action_id must be a non-empty string");
+    }
     const operatorKey = this.operatorKey(operator_open_id);
     const confirmationEventKey = this.confirmationEventKey(event_id);
     if (decision !== "approve" && decision !== "reject") {
@@ -721,7 +756,10 @@ export class RuntimeState {
       if (confirmation.status !== "pending") {
         return { accepted: false, reason: "ALREADY_RESOLVED" };
       }
-      if (confirmation.action_hash !== action_hash) {
+      if (
+        (confirmation.kind === "command" && confirmation.action_hash !== action_hash) ||
+        (confirmation.kind === "capability" && confirmation.action_id !== action_id)
+      ) {
         return { accepted: false, reason: "ACTION_MISMATCH" };
       }
       if (confirmation.operator_open_id !== operatorKey) {

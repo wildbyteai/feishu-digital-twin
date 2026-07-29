@@ -1,6 +1,6 @@
 {
   "name": "feishu-digital-twin",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "Self-hosted Feishu digital twin powered by Codex and the official lark-cli.",
   "author": {
     "name": "Feishu Digital Twin Contributors"

@@ -214,6 +214,42 @@ test("私有 MCP 工具缺少可信只读声明时在调用前失败关闭", asy
   }
 });
 
+test("MCP tools/list 重复工具名时失败关闭而不采用后项风险", async () => {
+  const pack = privatePack();
+  let calls = 0;
+  const servers = await resolvePrivateCapabilityServers({
+    packs: [pack],
+    resolveServer: async () => ({
+      async listTools() {
+        return { tools: [{
+          name: "records.get",
+          annotations: { readOnlyHint: false, destructiveHint: true }
+        }, {
+          name: "records.get",
+          annotations: { readOnlyHint: true, destructiveHint: false }
+        }] };
+      },
+      async callTool() {
+        calls += 1;
+        return { status: "complete", data: { content: "unexpected" }, source_refs: [] };
+      }
+    })
+  });
+  const gateway = new CapabilityGateway(compilePrivateCapabilityPacks({
+    packs: [pack],
+    servers
+  }));
+
+  assert.equal(gateway.snapshot()[0].readiness, "unavailable");
+  assert.equal((await gateway.lookup({
+    capability: "example.records.read",
+    operation: "get",
+    input: { record_id: "fixture-42" },
+    reason: "验证重复工具名失败关闭"
+  })).status, "unavailable");
+  assert.equal(calls, 0);
+});
+
 test("通用 MCP Adapter 直接归一化标准 CallToolResult", async () => {
   const compiled = await compileWithResolvedServers({
     packs: [privatePack()],
@@ -281,7 +317,56 @@ test("公共中性能力包示例符合版本化声明契约", () => {
   assert.equal(schema.$schema, "https://json-schema.org/draft/2020-12/schema");
   assert.equal(schema.properties.schema_version.const, 1);
   assert.equal(schema.additionalProperties, false);
-  assert.equal(schema.properties.tools.items.properties.risk.const, "read");
+  assert.deepEqual(
+    schema.properties.tools.items.properties.risk.enum,
+    ["read", "prepare", "write"]
+  );
+  assert.equal(schema.required.includes("actions"), false);
+  assert.equal(Object.hasOwn(schema.properties.capabilities, "minItems"), false);
+  assert.deepEqual(schema.allOf, [{
+    anyOf: [
+      {
+        properties: {
+          capabilities: { minItems: 1 }
+        }
+      },
+      {
+        required: ["actions"],
+        properties: {
+          actions: { minItems: 1 }
+        }
+      }
+    ]
+  }]);
+  const action = schema.properties.actions.items;
+  assert.equal(schema.properties.actions.type, "array");
+  assert.equal(schema.properties.actions.uniqueItems, true);
+  assert.equal(action.additionalProperties, false);
+  assert.deepEqual(action.required, [
+    "capability",
+    "operation",
+    "purpose",
+    "prepare_tool",
+    "confirm_tool",
+    "input_constraints",
+    "confirmation",
+    "trust_zone",
+    "input_description",
+    "failure_policy"
+  ]);
+  assert.equal(action.properties.prepare_tool.$ref, "#/$defs/portableIdentifier");
+  assert.equal(action.properties.confirm_tool.$ref, "#/$defs/portableIdentifier");
+  assert.equal(action.properties.trust_zone.const, "internal");
+  assert.equal(action.properties.input_description.maxLength, 1024);
+  assert.equal(action.properties.failure_policy.const, "human-fallback");
+  assert.deepEqual(action.properties.confirmation.required, [
+    "token_field",
+    "phrase_field",
+    "token_argument",
+    "phrase_argument",
+    "passthrough_fields"
+  ]);
+  assert.equal(action.properties.confirmation.additionalProperties, false);
   assert.equal(schema.properties.capabilities.items.properties.trust_zone.const, "internal");
   assert.equal(
     schema.properties.capabilities.items.properties.input_description.maxLength,

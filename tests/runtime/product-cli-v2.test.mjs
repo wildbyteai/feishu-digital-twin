@@ -27,7 +27,7 @@ import { runServiceRole } from "../../product/src/service-host.mjs";
 const projectRoot = path.resolve(import.meta.dirname, "../..");
 const cliPath = path.join(projectRoot, "bin/feishu-digital-twin.mjs");
 const fakeCodexFixture = path.join(projectRoot, "tests/fixtures/bin/codex");
-const CURRENT_VERSION = "0.1.13";
+const CURRENT_VERSION = "0.1.14";
 let syntheticInstanceSequence = 0;
 
 function runCli(executable, args, { env = {}, expected = 0 } = {}) {
@@ -88,6 +88,52 @@ function privateCapabilityPackFixture({
     allowed_fields: allowedFields,
     required_fields: requiredFields,
     max_bytes: maxBytes
+  };
+  writeFileSync(filename, `${JSON.stringify(pack, null, 2)}\n`, { mode: 0o600 });
+  chmodSync(filename, 0o600);
+  return { filename, pack };
+}
+
+function privateActionPackFixture({
+  packId = "example.approval",
+  capabilityId = "example.approval.execute",
+  serverRef = "example-managed-approval"
+} = {}) {
+  const directory = mkdtempSync(path.join(tmpdir(), "twin-private-action-"));
+  chmodSync(directory, 0o700);
+  const filename = path.join(directory, `${packId}.json`);
+  const pack = {
+    schema_version: 1,
+    pack_id: packId,
+    pack_version: "1.0.0",
+    server_ref: serverRef,
+    tools: [
+      { name: "approval.prepare", risk: "prepare" },
+      { name: "approval.confirm", risk: "write" }
+    ],
+    capabilities: [],
+    actions: [{
+      capability: capabilityId,
+      operation: "prepare",
+      purpose: "准备并确认合成审批",
+      prepare_tool: "approval.prepare",
+      confirm_tool: "approval.confirm",
+      input_constraints: {
+        allowed_fields: ["record_id", "decision"],
+        required_fields: ["record_id", "decision"],
+        max_bytes: 1024
+      },
+      confirmation: {
+        token_field: "confirmationToken",
+        phrase_field: "confirmationPhrase",
+        token_argument: "confirmationToken",
+        phrase_argument: "confirmationText",
+        passthrough_fields: []
+      },
+      trust_zone: "internal",
+      input_description: "record_id 和 decision 描述待确认审批",
+      failure_policy: "human-fallback"
+    }]
   };
   writeFileSync(filename, `${JSON.stringify(pack, null, 2)}\n`, { mode: 0o600 });
   chmodSync(filename, 0o600);
@@ -4044,13 +4090,66 @@ test("Doctor 只列语义能力与稳定代码且绝不调用业务工具", asyn
   assert.equal(requiredHealth.checks.capabilities.capabilities[0].required, true);
 });
 
+test("Doctor 按 prepare/write 注解识别确认型动作且不调用业务工具", async () => {
+  const { root } = initRoot("private-action-doctor");
+  const tools = codexFixture();
+  const { filename, pack } = privateActionPackFixture();
+  const action = pack.actions[0];
+  const candidate = writeCandidate(root, tools, {
+    private_capability_packs: [pack.pack_id],
+    allowed_capabilities: [action.capability],
+    required_capabilities: []
+  });
+  json(run([
+    "--root", root,
+    "configure",
+    "--config", candidate,
+    "--capability-pack", filename,
+    "--codex-bin", tools.codexBin,
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data",
+    "--approve-message-scope",
+    "--approve-capability-trust-zone", "internal"
+  ]));
+
+  let callToolCalls = 0;
+  const result = json(await runDirect(["--root", root, "doctor"], {
+    resolveCapabilityServer: async () => ({
+      async listTools() {
+        return {
+          tools: [{
+            name: action.prepare_tool,
+            annotations: { readOnlyHint: false, destructiveHint: false }
+          }, {
+            name: action.confirm_tool,
+            annotations: { readOnlyHint: false, destructiveHint: true }
+          }]
+        };
+      },
+      async callTool() {
+        callToolCalls += 1;
+        throw new Error("Doctor must not call a business tool");
+      }
+    })
+  }));
+
+  assert.equal(result.checks.capabilities.status, "pass");
+  assert.deepEqual(result.checks.capabilities.capabilities, [{
+    capability: action.capability,
+    code: "READY",
+    latency_ms: result.checks.capabilities.capabilities[0].latency_ms
+  }]);
+  assert.equal(callToolCalls, 0);
+});
+
 test("config update 只能收紧或撤销能力且不能重新扩权", () => {
   const { root } = initRoot("private-capability-update");
   const tools = codexFixture();
-  const { filename, pack } = privateCapabilityPackFixture();
+  const { filename, pack } = privateActionPackFixture();
+  const capability = pack.actions[0].capability;
   const initialCandidate = writeCandidate(root, tools, {
     private_capability_packs: [pack.pack_id],
-    allowed_capabilities: [pack.capabilities[0].capability],
+    allowed_capabilities: [capability],
     required_capabilities: []
   });
   json(run([
@@ -4079,7 +4178,7 @@ test("config update 只能收紧或撤销能力且不能重新扩权", () => {
 
   const expandedPath = writeCandidate(root, tools, {
     ...active,
-    allowed_capabilities: [pack.capabilities[0].capability]
+    allowed_capabilities: [capability]
   });
   const expanded = run([
     "--root", root,
@@ -4087,6 +4186,18 @@ test("config update 只能收紧或撤销能力且不能重新扩权", () => {
     "--config", expandedPath
   ], { expected: 1 });
   assert.equal(JSON.parse(expanded.stderr).code, "CAPABILITY_SETUP_REQUIRED");
+
+  const narrowed = JSON.parse(readFileSync(activePath, "utf8"));
+  const reuseEnabledPath = writeCandidate(root, tools, {
+    ...narrowed,
+    reuse_codex_mcp_servers: true
+  });
+  const reuseEnabled = run([
+    "--root", root,
+    "config", "update",
+    "--config", reuseEnabledPath
+  ], { expected: 1 });
+  assert.equal(JSON.parse(reuseEnabled.stderr).code, "CAPABILITY_SETUP_REQUIRED");
 
   const revokedPath = writeCandidate(root, tools, {
     ...active,

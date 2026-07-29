@@ -31,6 +31,7 @@ export const INSTANCE_CONFIG_FIELDS = Object.freeze([
   "profile",
   "public_web_search_approved",
   "required_capabilities",
+  "reuse_codex_mcp_servers",
   "schedule",
   "schema_version",
   "supplement_lookback_minutes"
@@ -324,6 +325,12 @@ export function validateInstanceConfig(value) {
   ) {
     throw new TypeError("config.public_web_search_approved must be a boolean");
   }
+  if (
+    value.reuse_codex_mcp_servers !== undefined &&
+    typeof value.reuse_codex_mcp_servers !== "boolean"
+  ) {
+    throw new TypeError("config.reuse_codex_mcp_servers must be a boolean");
+  }
   if (value.private_capability_packs !== undefined) {
     validateCapabilityIdentifiers(
       value.private_capability_packs,
@@ -334,6 +341,12 @@ export function validateInstanceConfig(value) {
         "config.allowed_capabilities is required when private capability packs are installed"
       );
     }
+  }
+  if (
+    value.reuse_codex_mcp_servers === true &&
+    (value.private_capability_packs?.length ?? 0) === 0
+  ) {
+    throw new TypeError("config.reuse_codex_mcp_servers requires private capability packs");
   }
   if (value.allowed_capabilities !== undefined) {
     validateCapabilityIdentifiers(value.allowed_capabilities, "config.allowed_capabilities");

@@ -121,6 +121,7 @@ const decision = {
   },
   commands: [],
   lookup_requests: [],
+  action_requests: [],
   source_refs: webSearchEnabled
     ? ["https://developers.example.invalid/codex"]
     : [messageId]
