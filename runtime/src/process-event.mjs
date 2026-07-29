@@ -163,8 +163,8 @@ function projectSignalsForAI(signals) {
   ));
 }
 
-function contextSenderRole(item, principal) {
-  if (hasCurrentOrLegacyAuthorityLabel(item?.content, principal?.name)) {
+function senderRole(item, principal) {
+  if (hasCurrentOrLegacyAuthorityLabel(item?.content ?? item?.text, principal?.name)) {
     return "digital_twin";
   }
   if (item?.sender_open_id === principal?.open_id) return "principal";
@@ -175,7 +175,7 @@ function projectContextForAI(context, principal) {
   if (!Array.isArray(context)) return [];
   return context.slice(0, AI_CONTEXT_LIMIT).map((item) => definedEntries({
     message_id: item?.message_id,
-    sender_role: contextSenderRole(item, principal),
+    sender_role: senderRole(item, principal),
     content: item?.content,
     links: Array.isArray(item?.links) ? structuredClone(item.links) : undefined,
     link_only: item?.link_only === true ? true : undefined,
@@ -221,7 +221,10 @@ export function projectEventForAI(event, intent) {
   return definedEntries({
     event_id: event.event_id,
     // The current Skill can request more same-chat history with official lark-cli.
-    ...(dailyMemoryIntent ? {} : { chat_id: event.chat_id }),
+    ...(dailyMemoryIntent ? {} : {
+      chat_id: event.chat_id,
+      sender_role: senderRole(event, intent?.principal)
+    }),
     chat_type: event.chat_type,
     message_id: event.message_id,
     sent_at: event.sent_at,
@@ -282,11 +285,7 @@ export function projectConfigForAI(config, event, intent) {
 function visibleResponse(response, principalName, { forceMode } = {}) {
   const mode = forceMode ?? response.mode;
   const body = stripAuthorityLabel(response.text);
-  const confirmationSuffix = `该事项尚未生效，需要${principalName}本人确认后方可执行。`;
-  const suffix = mode === "confirmation" && !body.endsWith(confirmationSuffix)
-    ? confirmationSuffix
-    : "";
-  return { mode, text: `${authorityLabel(mode, principalName)}${body}${suffix}` };
+  return { mode, text: `${authorityLabel(mode, principalName)}${body}` };
 }
 
 function humanContextFallback(event, state, principalName) {
@@ -562,6 +561,28 @@ export async function processEvent(event, {
           contextFetched: candidateEvent.context_meta?.fetched === true
         }),
         response: null,
+        action_requests: [],
+        executable_commands: [],
+        confirmation_commands: []
+      });
+    }
+
+    if (
+      state.frozen !== true &&
+      event.sender_open_id !== config.principal.open_id &&
+      (decision.action_requests ?? []).length > 0
+    ) {
+      return finish(runtimeState, event.event_id, {
+        ...decision,
+        outcome: "reply",
+        reason: "participant request requires principal authority",
+        reason_code: aiDecisionReasonCode("reply", {
+          contextFetched: candidateEvent.context_meta?.fetched === true
+        }),
+        response: visibleResponse({
+          mode: "representative",
+          text: `收到，我会提醒${config.principal.name}查看并处理。`
+        }, config.principal.name),
         action_requests: [],
         executable_commands: [],
         confirmation_commands: []

@@ -136,6 +136,7 @@ test("普通消息只把决策所需的最小事件、角色上下文和当前�
     chat_id: "oc_command_context",
     chat_type: "group",
     message_id: "om_projection",
+    sender_role: "participant",
     sent_at: "2026-07-24T09:00:00.000Z",
     update_time: "2026-07-24T09:01:00.000Z",
     message_type: "text",
@@ -209,6 +210,8 @@ test("普通消息只把决策所需的最小事件、角色上下文和当前�
   assert.equal(prompt.includes('"sender_role": "digital_twin"'), true);
   assert.equal(prompt.includes('"sender_role": "participant"'), true);
   assert.equal(prompt.includes('"https://example.invalid/workflow"'), true);
+  assert.match(prompt, /主体用户的 AI 助理/u);
+  assert.match(prompt, /participant[\s\S]*不能视为主体用户的授权/u);
   assert.match(prompt, /已有链接[^\n]*不要[^\n]*(?:再次|重新)[^\n]*索要/u);
 });
 

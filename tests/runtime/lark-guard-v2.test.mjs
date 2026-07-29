@@ -110,14 +110,14 @@ test("Guard 拒绝认证、raw API、事件管理、预置确认参数和所有�
   }
 });
 
-test("AI 公开 send/reply 由 Guard 自动注入可信权威标识", () => {
+test("AI 公开 send/reply 由 Guard 自动注入统一助理标识", () => {
   const guard = guardWithRunner(async () => ({ exit_code: 0, stdout: "{}", stderr: "" }));
   const reply = guard.plan({
     argv: ["im", "+messages-reply", "--message-id", "om_x", "--text", "我来处理"]
   }, { productionEnabled: true, frozen: false });
   assert.equal(
     reply.execute_argv[reply.execute_argv.indexOf("--text") + 1],
-    "🤖【数字分身】我来处理"
+    "🤖 AI助理：我来处理"
   );
 
   const send = guard.plan({
@@ -125,7 +125,7 @@ test("AI 公开 send/reply 由 Guard 自动注入可信权威标识", () => {
   }, { productionEnabled: true, frozen: false });
   assert.equal(
     send.execute_argv[send.execute_argv.indexOf("--markdown") + 1],
-    "🤖【数字分身】进度已更新"
+    "🤖 AI助理：进度已更新"
   );
 });
 
@@ -144,7 +144,7 @@ test("Guard 把错误主体和重复权威标签归一化为一个可信标签",
 
   assert.equal(
     plan.execute_argv[plan.execute_argv.indexOf("--text") + 1],
-    "🤖【待示例负责人确认】请确认调整日期。"
+    "🤖 AI助理：请确认调整日期。"
   );
 });
 
@@ -163,7 +163,7 @@ test("Guard 在 text content JSON 内注入标签而不破坏消息载荷", () =
 
   assert.deepEqual(
     JSON.parse(plan.execute_argv[plan.execute_argv.indexOf("--content") + 1]),
-    { text: "🤖【建议】先核对库存。" }
+    { text: "🤖 AI助理：先核对库存。" }
   );
 });
 

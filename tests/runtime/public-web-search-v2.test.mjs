@@ -252,7 +252,7 @@ test("普通业务问题通过公共 Web Search 查询后回到同一决策循�
     assert.doesNotMatch(outboundPromptInputs, new RegExp(hiddenContext, "u"));
     assert.doesNotMatch(outboundPromptInputs, new RegExp(hiddenConfig, "u"));
     assert.doesNotMatch(outboundPromptInputs, /evt-public-business-search|om_public_business_search/u);
-    assert.equal(result.response.text, "🤖【数字分身】建议按合成版本 1.2.3 评估升级。");
+    assert.equal(result.response.text, "🤖 AI助理：建议按合成版本 1.2.3 评估升级。");
     assert.equal(result.lookups[0].result.status, "complete");
   } finally {
     runtimeState.close();

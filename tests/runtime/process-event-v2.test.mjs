@@ -53,7 +53,7 @@ function decision(overrides = {}) {
   };
 }
 
-test("AI 决定业务语义，可信运行时只添加数字分身标识", async () => {
+test("AI 决定业务语义，可信运行时只添加统一助理标识", async () => {
   const result = await processEvent(event(), {
     config: config(),
     runtimeState: { getRuntimeState: () => ({ frozen: false }) },
@@ -61,7 +61,7 @@ test("AI 决定业务语义，可信运行时只添加数字分身标识", async
   });
 
   assert.equal(result.outcome, "reply");
-  assert.equal(result.response.text, "🤖【数字分身】这个方案可以继续推进。");
+  assert.equal(result.response.text, "🤖 AI助理：这个方案可以继续推进。");
   assert.deepEqual(result.executable_commands, []);
 });
 
@@ -73,7 +73,7 @@ test("没有后续能力请求的最终回复仍必须包含有效回复模式",
   }), /decision\.response\.mode is invalid/u);
 });
 
-test("待本人确认保留具体建议并明确尚未生效", async () => {
+test("待本人确认保留具体建议但不拼接内部系统话术", async () => {
   const result = await processEvent(event(), {
     config: config(),
     runtimeState: { getRuntimeState: () => ({ frozen: false }) },
@@ -93,13 +93,13 @@ test("待本人确认保留具体建议并明确尚未生效", async () => {
 
   assert.equal(
     result.response.text,
-    "🤖【待示例负责人确认】建议把交付时间调整到周五。该事项尚未生效，需要示例负责人本人确认后方可执行。"
+    "🤖 AI助理：建议把交付时间调整到周五。"
   );
   assert.equal(result.confirmation_commands.length, 1);
   assert.equal(result.executable_commands.length, 0);
 });
 
-test("只要存在本人确认动作，运行时强制使用待确认标识", async () => {
+test("存在本人确认动作时仍使用统一助理标识", async () => {
   const result = await processEvent(event(), {
     config: config(),
     runtimeState: { getRuntimeState: () => ({ frozen: false }) },
@@ -113,7 +113,7 @@ test("只要存在本人确认动作，运行时强制使用待确认标识", as
       }]
     })
   });
-  assert.equal(result.response.text.startsWith("🤖【待示例负责人确认】"), true);
+  assert.equal(result.response.text.startsWith("🤖 AI助理："), true);
 });
 
 test("外部群正常交给 AI 处理，群级规则作为上下文传入", async () => {
@@ -129,7 +129,7 @@ test("外部群正常交给 AI 处理，群级规则作为上下文传入", asyn
     }
   });
   assert.equal(external.outcome, "reply");
-  assert.equal(external.response.text.startsWith("🤖【数字分身】"), true);
+  assert.equal(external.response.text.startsWith("🤖 AI助理："), true);
   assert.deepEqual(promptContext.config.group_rules, ["承诺交期前先核实库存"]);
 });
 
@@ -187,7 +187,10 @@ test("需本人确认的语义业务动作独立进入可信运行时", async ()
     input: { record_id: "fixture-42", decision: "approve" },
     reason: "准备审批"
   };
-  const result = await processEvent(event(), {
+  const result = await processEvent(event({
+    chat_type: "p2p",
+    sender_open_id: "ou_principal"
+  }), {
     config: config(),
     runtimeState: { getRuntimeState: () => ({ frozen: false }) },
     capabilitySnapshot: [{
@@ -210,6 +213,39 @@ test("需本人确认的语义业务动作独立进入可信运行时", async ()
   assert.equal(result.response.mode, "confirmation");
   assert.equal(result.executable_commands.length, 0);
   assert.equal(result.confirmation_commands.length, 0);
+});
+
+test("对方提出审批请求时不能替主体决定，只以助理身份接收并转达", async () => {
+  const result = await processEvent(event({
+    chat_type: "p2p",
+    text: "帮我审批一下"
+  }), {
+    config: config(),
+    runtimeState: { getRuntimeState: () => ({ frozen: false }) },
+    capabilitySnapshot: [{
+      capability: "fixture.approval.execute",
+      purpose: "准备并确认审批",
+      operations: ["prepare"],
+      risk: "approval",
+      trust_zone: "internal",
+      readiness: "ready",
+      input_description: "审批记录和决定"
+    }],
+    runCodex: async () => decision({
+      outcome: "confirm",
+      response: { mode: "confirmation", text: "建议审批通过。" },
+      action_requests: [{
+        capability: "fixture.approval.execute",
+        operation: "prepare",
+        input: { record_id: "fixture-42", decision: "approve" },
+        reason: "准备审批"
+      }]
+    })
+  });
+
+  assert.equal(result.outcome, "reply");
+  assert.equal(result.response.text, "🤖 AI助理：收到，我会提醒示例负责人查看并处理。");
+  assert.deepEqual(result.action_requests, []);
 });
 
 test("同一轮不能混用查询、语义业务动作和飞书命令", async () => {
@@ -383,7 +419,7 @@ test("结构化引用没有可读内容时不调用 AI，直接建议原会话�
   assert.equal(result.response.mode, "suggestion");
   assert.equal(
     result.response.text,
-    "🤖【建议】当前消息或引用内容无法读取，无法据此形成可靠结论，请人工检查原消息或链接后继续处理。"
+    "🤖 AI助理：当前消息或引用内容无法读取，无法据此形成可靠结论，请人工检查原消息或链接后继续处理。"
   );
   assert.deepEqual(result.executable_commands, []);
   assert.deepEqual(result.confirmation_commands, []);
@@ -507,7 +543,7 @@ test("已有链接时 AI 再次索要链接会被替换为确定性人工兜底"
 
   assert.equal(
     result.response.text,
-    "🤖【建议】当前消息或引用内容无法读取，无法据此形成可靠结论，请人工检查原消息或链接后继续处理。"
+    "🤖 AI助理：当前消息或引用内容无法读取，无法据此形成可靠结论，请人工检查原消息或链接后继续处理。"
   );
 });
 
@@ -529,7 +565,7 @@ test("普通消息附带参考链接但无需读取正文时保留正常回复",
   });
 
   assert.equal(result.reason, "需要回应");
-  assert.equal(result.response.text, "🤖【数字分身】收到。");
+  assert.equal(result.response.text, "🤖 AI助理：收到。");
 });
 
 test("链接目标正文未读取时 AI 生成的流程摘要会被替换", async () => {
@@ -586,7 +622,7 @@ test("与目标链接明确关联的可读正文允许形成回复", async () =>
   });
 
   assert.equal(result.response.mode, "representative");
-  assert.equal(result.response.text, "🤖【数字分身】该流程需要人工审批。");
+  assert.equal(result.response.text, "🤖 AI助理：该流程需要人工审批。");
 });
 
 test("查询来源链接移除 query 和 fragment 后仍可关联原始链接", async () => {
@@ -622,7 +658,7 @@ test("查询来源链接移除 query 和 fragment 后仍可关联原始链接", 
   });
 
   assert.equal(result.reason, "需要回应");
-  assert.equal(result.response.text, "🤖【数字分身】该流程需要人工审批。");
+  assert.equal(result.response.text, "🤖 AI助理：该流程需要人工审批。");
 });
 
 test("最终回复不能引用本轮能力结果之外的来源链接", async () => {
