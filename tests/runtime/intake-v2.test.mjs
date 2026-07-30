@@ -425,6 +425,69 @@ test("单聊最近上下文按时间排序且只在本次处理使用", async ()
   assert.equal(hydrated.context_meta.scope, "chat");
 });
 
+test("上下文只把当前 Bot 或主体账号的可信标签认作助理发言", async () => {
+  let identityReads = 0;
+  const hydrated = await hydrateCandidate({
+    message_id: "om_identity_current",
+    chat_id: "oc_identity",
+    chat_type: "p2p",
+    sender_open_id: "ou_member",
+    sent_at: "2026-07-16T10:00:00.000Z",
+    message_type: "text",
+    text: "继续",
+    signals: { context_lookup_required: true },
+    context: []
+  }, {
+    principal,
+    reader: {
+      async currentBotAppId() {
+        identityReads += 1;
+        return "cli_current_bot";
+      },
+      async listMessages() {
+        return {
+          messages: [
+            {
+              message_id: "om_current_bot",
+              chat_id: "oc_identity",
+              create_time: "2026-07-16T09:57:00.000Z",
+              content: "🤖 AI助理：当前 Bot 的回复",
+              sender: { id: "cli_current_bot", sender_type: "app" }
+            },
+            {
+              message_id: "om_human_quote",
+              chat_id: "oc_identity",
+              create_time: "2026-07-16T09:58:00.000Z",
+              content: "🤖 AI助理：协作者引用的文字",
+              sender: { id: "ou_other", sender_type: "user" }
+            },
+            {
+              message_id: "om_other_app",
+              chat_id: "oc_identity",
+              create_time: "2026-07-16T09:59:00.000Z",
+              content: "🤖 AI助理：其他应用的文字",
+              sender: { id: "cli_other_app", sender_type: "app" }
+            }
+          ]
+        };
+      }
+    }
+  });
+
+  assert.equal(identityReads, 1);
+  assert.deepEqual(
+    hydrated.context.map(({ message_id, assistant_authored }) => ({
+      message_id,
+      assistant_authored: assistant_authored === true
+    })),
+    [
+      { message_id: "om_current_bot", assistant_authored: true },
+      { message_id: "om_human_quote", assistant_authored: false },
+      { message_id: "om_other_app", assistant_authored: false }
+    ]
+  );
+});
+
 test("精确引用不可读时即使话题另有消息也标记确定性人工兜底", async () => {
   const hydrated = await hydrateCandidate({
     message_id: "om_unreadable_current",

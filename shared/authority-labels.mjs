@@ -1,7 +1,7 @@
 export const RESPONSE_MODES = new Set(["representative", "suggestion", "confirmation"]);
 
 const AI_ASSISTANT_LABEL = "🤖 AI助理：";
-const AI_ASSISTANT_LABEL_PATTERN = /^(?:🤖\s*)?AI助理\s*[:：]\s*/u;
+const AI_ASSISTANT_LABEL_PATTERN = /^(?:🤖\s*)?(?:(?:\*\*|__)\s*)?(?:🤖\s*)?AI助理\s*[:：]\s*(?:(?:\*\*|__)\s*)?/u;
 const LEGACY_AUTHORITY_LABEL = /^🤖【(?:数字分身|代表发言|建议|待[^】]+确认)】/u;
 
 export function authorityLabel(mode, principalName) {
@@ -23,11 +23,7 @@ export function stripAuthorityLabel(text) {
 }
 
 export function hasAuthorityLabel(text, principalName) {
-  return typeof text === "string" && [
-    authorityLabel("representative", principalName),
-    authorityLabel("suggestion", principalName),
-    authorityLabel("confirmation", principalName)
-  ].some((label) => text.startsWith(label));
+  return typeof text === "string" && AI_ASSISTANT_LABEL_PATTERN.test(text);
 }
 
 export function hasCurrentOrLegacyAuthorityLabel(text, principalName) {

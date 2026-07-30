@@ -37,17 +37,28 @@ export class LarkImReader {
     }
     this.larkBin = larkBin;
     this.prefix = ["--profile", profile];
+    this.botAppIdPromise = undefined;
   }
 
   async currentBotAppId() {
-    const identity = await runCommandJson(this.larkBin, [
-      ...this.prefix, "whoami", "--as", "bot"
-    ]);
-    const appId = identity?.appId ?? identity?.app_id;
-    if (identity?.identity !== "bot" || typeof appId !== "string" || appId.length === 0) {
-      throw new Error("lark-cli whoami did not return the current bot app_id");
+    if (this.botAppIdPromise === undefined) {
+      this.botAppIdPromise = (async () => {
+        const identity = await runCommandJson(this.larkBin, [
+          ...this.prefix, "whoami", "--as", "bot"
+        ]);
+        const appId = identity?.appId ?? identity?.app_id;
+        if (identity?.identity !== "bot" || typeof appId !== "string" || appId.length === 0) {
+          throw new Error("lark-cli whoami did not return the current bot app_id");
+        }
+        return appId;
+      })();
     }
-    return appId;
+    try {
+      return await this.botAppIdPromise;
+    } catch (error) {
+      this.botAppIdPromise = undefined;
+      throw error;
+    }
   }
 
   listChats({ pageToken } = {}) {
