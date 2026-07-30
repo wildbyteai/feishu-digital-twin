@@ -76,6 +76,10 @@ function guard(calls = []) {
   });
 }
 
+async function sendNotification() {
+  return { status: "complete" };
+}
+
 test("CapabilityGateway 只公开最小能力快照并返回稳定成功结果", async () => {
   const requests = [];
   const capabilityGateway = gateway(async (request) => {
@@ -251,6 +255,68 @@ test("当前消息链接查询缺少 Adapter 来源时补充来源并形成最�
   }
 });
 
+test("链接卡片把 URL 单独投影到 links 时仍能关联查询来源", async () => {
+  const runtimeState = state();
+  const sourceUrl = "https://example.invalid/workflows/42";
+  let decisions = 0;
+  try {
+    const service = new TwinService({
+      config: config(),
+      state: runtimeState,
+      guard: guard(),
+      capabilityGateway: gateway(async () => ({
+        status: "complete",
+        data: { title: "合成流程", state: "pending", content: "等待负责人处理" },
+        source_refs: []
+      })),
+      runCodex: async (input) => {
+        decisions += 1;
+        if (input.capability_feedback.length === 0) {
+          return {
+            event_id: input.event_id,
+            outcome: "reply",
+            reason: "需要读取链接卡片",
+            response: { mode: "representative", text: "正在核实。" },
+            commands: [],
+            lookup_requests: [{
+              capability: "fixture.workflow.read",
+              operation: "get",
+              input: { url: sourceUrl },
+              reason: "核实链接卡片"
+            }],
+            source_refs: [input.message_id]
+          };
+        }
+        const sourceRefs = input.capability_feedback[0].result.source_refs;
+        return {
+          event_id: input.event_id,
+          outcome: "reply",
+          reason: "流程状态已经核实",
+          response: { mode: "representative", text: "流程目前处于待处理状态。" },
+          commands: [],
+          lookup_requests: [],
+          source_refs: sourceRefs.length > 0 ? [sourceRefs[0]] : [input.message_id]
+        };
+      }
+    });
+
+    const result = await service.handle(event({
+      event_id: "evt-link-card-source",
+      message_id: "om-link-card-source",
+      message_type: "share_link",
+      text: "内部流程入口",
+      links: [sourceUrl],
+      link_only: true
+    }));
+
+    assert.equal(decisions, 2);
+    assert.equal(result.response.text, "🤖 AI助理：流程目前处于待处理状态。");
+    assert.deepEqual(result.lookups[0].result.source_refs, [sourceUrl]);
+  } finally {
+    runtimeState.close();
+  }
+});
+
 test("Fake Adapter 的失败和空结果被映射为不含底层正文的稳定状态", async () => {
   const failed = await gateway(async () => {
     throw new Error("private adapter failure body");
@@ -413,6 +479,7 @@ test("CapabilityGateway 按 trust zone 最小投影可信上下文", async () =>
 test("成功查询结果不能触发同域或跨域后续查询", async () => {
   const runtimeState = state();
   const larkCalls = [];
+  const privateNotifications = [];
   let publicCalls = 0;
   let internalCalls = 0;
   const capabilities = [{
@@ -472,6 +539,10 @@ test("成功查询结果不能触发同域或跨域后续查询", async () => {
       state: runtimeState,
       guard: guard(larkCalls),
       capabilityGateway,
+      sendNotification: async (request) => {
+        privateNotifications.push(structuredClone(request));
+        return { status: "complete" };
+      },
       runCodex: async (input, options) => {
         const round = (decisionRounds.get(input.event_id) ?? 0) + 1;
         decisionRounds.set(input.event_id, round);
@@ -546,8 +617,9 @@ test("成功查询结果不能触发同域或跨域后续查询", async () => {
     assert.equal(larkCalls.some((argv) => argv.includes("不应创建")), false);
     assert.equal(sameTrustZoneResult.response.mode, "suggestion");
     assert.equal(crossTrustZoneResult.response.mode, "suggestion");
-    assert.match(sameTrustZoneResult.response.text, /人工检查/u);
-    assert.match(crossTrustZoneResult.response.text, /人工检查/u);
+    assert.match(sameTrustZoneResult.response.text, /公开信息暂时无法查询/u);
+    assert.match(crossTrustZoneResult.response.text, /公开信息暂时无法查询/u);
+    assert.equal(privateNotifications.length, 0);
     assert.deepEqual(snapshots, [capabilities, capabilities, capabilities, capabilities]);
     assert.doesNotMatch(
       JSON.stringify([sameTrustZoneResult, crossTrustZoneResult]),
@@ -993,6 +1065,7 @@ for (const [name, handler, expectedStatus] of [
         state: runtimeState,
         guard: guard(),
         capabilityGateway: gateway(handler),
+        sendNotification,
         runCodex: async (input) => {
           decisions += 1;
           if ((input.capability_feedback ?? []).length === 0) {
@@ -1033,13 +1106,100 @@ for (const [name, handler, expectedStatus] of [
       assert.equal(result.lookups[0].result.status, expectedStatus);
       assert.equal(result.response.mode, "suggestion");
       assert.equal(result.response.text.startsWith("🤖 AI助理："), true);
-      assert.match(result.response.text, /未返回可读内容.*人工检查/u);
+      assert.match(result.response.text, /会提醒.*检查/u);
       assert.doesNotMatch(JSON.stringify(result), /private failure body|流程已经处理完成/u);
     } finally {
       runtimeState.close();
     }
   });
 }
+
+test("能力查询失败后转人工时清除后续业务动作请求", async () => {
+  const runtimeState = state();
+  let prepareCalls = 0;
+  let decisions = 0;
+  const capabilityActionGateway = {
+    snapshot() {
+      return [{
+        capability: "fixture.workflow.approve",
+        purpose: "准备合成流程审批",
+        operations: ["approve"],
+        risk: "approval",
+        trust_zone: "internal",
+        readiness: "ready",
+        input_description: "合成流程标识和决定"
+      }];
+    },
+    async prepare() {
+      prepareCalls += 1;
+      throw new Error("failed lookup must suppress action preparation");
+    },
+    async confirm() {
+      throw new Error("must not confirm");
+    },
+    cancel() {
+      return false;
+    }
+  };
+  try {
+    const service = new TwinService({
+      config: config(),
+      state: runtimeState,
+      guard: guard(),
+      capabilityGateway: gateway(async () => ({ status: "unavailable" })),
+      capabilityActionGateway,
+      runCodex: async (input) => {
+        decisions += 1;
+        if ((input.capability_feedback ?? []).length === 0) {
+          return {
+            event_id: input.event_id,
+            outcome: "reply",
+            reason: "需要先查询",
+            response: { mode: "representative", text: "我先查询。" },
+            commands: [],
+            lookup_requests: [{
+              capability: "fixture.workflow.read",
+              operation: "get",
+              input: { workflow_id: "fixture-42" },
+              reason: "核实流程状态"
+            }],
+            action_requests: [],
+            source_refs: [input.message_id]
+          };
+        }
+        return {
+          event_id: input.event_id,
+          outcome: "confirm",
+          reason: "错误地尝试继续审批",
+          response: { mode: "confirmation", text: "建议继续审批。" },
+          commands: [],
+          lookup_requests: [],
+          action_requests: [{
+            capability: "fixture.workflow.approve",
+            operation: "approve",
+            input: { workflow_id: "fixture-42", decision: "approve" },
+            reason: "准备审批"
+          }],
+          source_refs: [input.message_id]
+        };
+      }
+    });
+
+    const result = await service.handle(event({
+      event_id: "evt-failed-lookup-suppresses-action",
+      message_id: "om-failed-lookup-suppresses-action",
+      chat_type: "p2p",
+      sender_open_id: "ou_principal"
+    }));
+
+    assert.equal(decisions, 2);
+    assert.equal(prepareCalls, 0);
+    assert.deepEqual(result.action_requests, []);
+    assert.equal(result.response.mode, "suggestion");
+  } finally {
+    runtimeState.close();
+  }
+});
 
 test("能力查询结果不能利用剩余动作预算自动追加飞书动作", async () => {
   const runtimeState = state();

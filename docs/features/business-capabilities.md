@@ -27,6 +27,7 @@
 - 位于产品源码树之外，目录仅当前用户可访问，文件权限为 `0600`；
 - 使用 `schema_version: 1` 和语义化 `pack_version`；
 - 查询声明 `read` 工具；确认型动作必须成对声明非破坏性的 `prepare` 工具和破坏性的 `write` 工具，并统一使用 `internal` 信任域和 `human-fallback`；
+- 需要登录态的 MCP 可选声明一个 `readiness_check` 只读健康工具；运行时只用空参数检查 `{ "ok": true }` 或 `{ "ready": true }`，不会把健康结果交给 Codex；
 - 精确列出允许工具、语义操作、允许输入字段、必需字段、最大输入字节和确认字段映射；
 - 不包含 JavaScript、shell hook、凭据、Cookie、浏览器资料或模型配置。
 
@@ -41,7 +42,7 @@
 }
 ```
 
-`required_capabilities` 只用于决定整体 Doctor 是否降级；它必须是 `allowed_capabilities` 的子集。可选能力不可用时只让对应查询失败关闭，不会冻结无关飞书处理。
+`required_capabilities` 必须是 `allowed_capabilities` 的子集。普通可选能力不可用时只让对应查询失败关闭；但能力包显式声明的授权健康检查失败时，Doctor 会报告 `CAPABILITY_NOT_READY` 并将整体状态标记为未就绪，避免登录已失效却继续显示正常。
 
 ## 安装与授权
 
@@ -55,7 +56,7 @@ feishu-digital-twin setup \
   --approve-capability-trust-zone internal
 ```
 
-`--approve-capability-trust-zone internal` 只批准这次新增或改变的内部数据边界，不是日常开关。能力包改变 MCP server reference、工具绑定、信任域、操作、确认映射或输入限制时，必须重新 setup 和确认。
+`--approve-capability-trust-zone internal` 只批准这次新增或改变的内部数据边界，不是日常开关。能力包改变 MCP server reference、工具绑定、授权健康工具、信任域、操作、确认映射或输入限制时，必须重新 setup 和确认。
 
 默认不会扫描或复用用户主 Codex/桌面应用中的 MCP 配置。只有实例显式设置 `reuse_codex_mcp_servers: true` 时，运行时才对能力包写明的精确 server reference 执行 `codex mcp get`；不会调用 MCP list，也不会发现其他本机 MCP。查询工具必须标记 `readOnlyHint: true` 且非 destructive；准备工具必须标记非只读且非 destructive；提交工具必须标记非只读且 destructive。任一声明缺失或含糊都失败关闭为 `unavailable`。真实内部 MCP、认证和私有能力包继续由部署者管理，不进入公共源码、文档示例或发行物。
 
@@ -76,9 +77,9 @@ feishu-digital-twin doctor
 feishu-digital-twin status
 ```
 
-Doctor 只使用非业务合成检查，输出语义能力标识、稳定就绪代码、耗时和 required 标记；不读取真实流程，不调用业务工具，也不显示私有路径、MCP server reference、工具名、地址、凭据或返回正文。查询成功结果若含凭据形状会失败关闭，不透明来源引用会被丢弃。
+Doctor 只使用非业务检查，输出语义能力标识、稳定就绪代码、耗时和 required 标记；不读取真实流程、不调用查询或审批工具。若能力包显式声明 `readiness_check`，Doctor 只调用这一只读健康工具并丢弃返回正文，仅判断是否就绪；不会显示私有路径、MCP server reference、工具名、地址、身份或凭据。查询成功结果若含凭据形状会失败关闭，不透明来源引用会被丢弃。
 
-查询或动作准备/提交出现不可用、未登录、无权限、超时、输入无效、失败或空结果时，不会改用其他信任域、浏览器或本机文件。可信运行时在原授权会话中以建议身份执行 `human-fallback`，明确说明需要人工读取或处理，不猜测业务内容，也不自动联系其他人员。
+查询或动作准备/提交出现不可用、未登录、无权限、超时、输入无效、失败或空结果时，不会改用其他信任域、浏览器或本机文件。公开查询失败只在原会话说明暂时无法查询。内部资料请求失败时，主体用户本人会收到直接检查授权或原始链接的提示；其他人发起请求时，原会话只收到自然的助理说明，同时主体用户会收到单独提醒。系统不猜测业务内容，也不会让请求人代替主体用户确认。
 
 ## 撤销
 

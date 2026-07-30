@@ -3,6 +3,7 @@ const PACK_FIELDS = Object.freeze([
   "capabilities",
   "pack_id",
   "pack_version",
+  "readiness_check",
   "schema_version",
   "server_ref",
   "tools"
@@ -46,10 +47,12 @@ const CONFIRMATION_FIELDS = Object.freeze([
   "token_argument",
   "token_field"
 ]);
+const READINESS_CHECK_FIELDS = Object.freeze(["tool"]);
 const PORTABLE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const PACK_VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u;
 const MAX_INPUT_BYTES = 8 * 1024;
 const MAX_INPUT_DESCRIPTION_BYTES = 1024;
+const TRUSTED_READINESS_CHECKS = Symbol("trusted private capability readiness checks");
 const READ_OPERATIONS = new Set([
   "fetch",
   "get",
@@ -79,7 +82,9 @@ function requirePack(value) {
     throw new TypeError("pack must be an object");
   }
   const allowed = new Set(PACK_FIELDS);
-  const required = PACK_FIELDS.filter((field) => field !== "actions");
+  const required = PACK_FIELDS.filter((field) => (
+    field !== "actions" && field !== "readiness_check"
+  ));
   if (
     Object.keys(value).some((field) => !allowed.has(field)) ||
     required.some((field) => !Object.hasOwn(value, field))
@@ -152,6 +157,19 @@ function validateTool(value, index) {
     throw new TypeError(`${name}.risk must be read, prepare, or write`);
   }
   return structuredClone(tool);
+}
+
+function validateReadinessCheck(value) {
+  const readiness = requireExactObject(
+    value,
+    READINESS_CHECK_FIELDS,
+    "pack.readiness_check"
+  );
+  return {
+    tool: requireText(readiness.tool, "pack.readiness_check.tool", {
+      pattern: PORTABLE_ID
+    })
+  };
 }
 
 function validateAction(value, index) {
@@ -303,6 +321,9 @@ export function validatePrivateCapabilityPack(value) {
     throw new TypeError("pack.actions must have unique capability identifiers");
   }
   const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
+  const readinessCheck = pack.readiness_check === undefined
+    ? undefined
+    : validateReadinessCheck(pack.readiness_check);
   const allowedTools = new Set(toolsByName.keys());
   const referencedTools = new Set(capabilities.flatMap(({ operations }) =>
     operations.map(({ tool }) => tool)
@@ -312,9 +333,11 @@ export function validatePrivateCapabilityPack(value) {
   ));
   const toolMappings = [
     ...capabilities.flatMap(({ operations }) => operations.map(({ tool }) => tool)),
-    ...actionTools
+    ...actionTools,
+    ...(readinessCheck ? [readinessCheck.tool] : [])
   ];
   actionTools.forEach((tool) => referencedTools.add(tool));
+  if (readinessCheck) referencedTools.add(readinessCheck.tool);
   if (referencedTools.size !== toolMappings.length) {
     throw new TypeError("pack tools must map to exactly one capability operation");
   }
@@ -339,6 +362,9 @@ export function validatePrivateCapabilityPack(value) {
       throw new TypeError("action confirm tool must declare write risk");
     }
   }
+  if (readinessCheck && toolsByName.get(readinessCheck.tool)?.risk !== "read") {
+    throw new TypeError("readiness check tool must declare read risk");
+  }
   return {
     schema_version: 1,
     pack_id: pack.pack_id,
@@ -346,7 +372,8 @@ export function validatePrivateCapabilityPack(value) {
     server_ref: pack.server_ref,
     tools,
     capabilities,
-    ...(pack.actions === undefined ? {} : { actions })
+    ...(pack.actions === undefined ? {} : { actions }),
+    ...(readinessCheck === undefined ? {} : { readiness_check: readinessCheck })
   };
 }
 
@@ -414,6 +441,19 @@ function normalizeMcpToolResult(result) {
   };
 }
 
+export function privateCapabilityReadinessPassed(result) {
+  const normalized = normalizeMcpToolResult(result);
+  if (normalized.status !== "complete") return false;
+  const data = normalized.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return false;
+  const code = typeof data.code === "string" ? data.code.toUpperCase() : "";
+  return (data.ok === true || data.ready === true) &&
+    data.authRequired !== true &&
+    data.reauthRequired !== true &&
+    code !== "AUTH_REQUIRED" &&
+    code !== "UNAUTHENTICATED";
+}
+
 export function advertisedMcpToolRisks(result) {
   const tools = Array.isArray(result)
     ? result
@@ -435,15 +475,29 @@ export function advertisedMcpToolRisks(result) {
   return risks;
 }
 
-function trustedServer(server, toolRisks) {
+function trustedServer(server, toolRisks, readinessChecks = new Map()) {
   const readOnlyTools = new Set([...toolRisks.entries()]
     .filter(([, risk]) => risk === "read")
     .map(([name]) => name));
   return Object.freeze({
     callTool: server.callTool.bind(server),
     [TRUSTED_READ_ONLY_TOOLS]: readOnlyTools,
+    [TRUSTED_READINESS_CHECKS]: new Map(readinessChecks),
     [TRUSTED_TOOL_RISKS]: new Map(toolRisks)
   });
+}
+
+export async function checkPrivateCapabilityReadiness(server, readinessCheck, readOnlyTools) {
+  if (readinessCheck === undefined) return true;
+  if (!readOnlyTools.has(readinessCheck.tool)) return false;
+  try {
+    return privateCapabilityReadinessPassed(await server.callTool({
+      name: readinessCheck.tool,
+      arguments: {}
+    }));
+  } catch {
+    return false;
+  }
 }
 
 export async function resolvePrivateCapabilityServers({
@@ -454,9 +508,8 @@ export async function resolvePrivateCapabilityServers({
   if (typeof resolveServer !== "function") {
     throw new TypeError("resolveServer must be a function");
   }
-  const serverRefs = [...new Set(
-    packs.map((pack) => validatePrivateCapabilityPack(pack).server_ref)
-  )];
+  const validatedPacks = packs.map(validatePrivateCapabilityPack);
+  const serverRefs = [...new Set(validatedPacks.map(({ server_ref: serverRef }) => serverRef))];
   const servers = new Map();
   for (const serverRef of serverRefs) {
     const server = await resolveServer(serverRef);
@@ -472,13 +525,26 @@ export async function resolvePrivateCapabilityServers({
       continue;
     }
     if (toolRisks === null) continue;
-    servers.set(serverRef, trustedServer(server, toolRisks));
+    const readOnlyTools = new Set([...toolRisks.entries()]
+      .filter(([, risk]) => risk === "read")
+      .map(([name]) => name));
+    const readinessChecks = new Map(validatedPacks
+      .filter((pack) => pack.server_ref === serverRef && pack.readiness_check !== undefined)
+      .map((pack) => [pack.readiness_check.tool, pack.readiness_check]));
+    const readinessResults = new Map();
+    for (const readinessCheck of readinessChecks.values()) {
+      readinessResults.set(
+        readinessCheck.tool,
+        await checkPrivateCapabilityReadiness(server, readinessCheck, readOnlyTools)
+      );
+    }
+    servers.set(serverRef, trustedServer(server, toolRisks, readinessResults));
   }
   return servers;
 }
 
 export class McpCapabilityAdapter {
-  constructor({ server, capability, readOnlyTools }) {
+  constructor({ server, capability, readOnlyTools, readinessCheck }) {
     if (typeof server?.callTool !== "function") {
       throw new TypeError("MCP server callTool is required");
     }
@@ -487,6 +553,9 @@ export class McpCapabilityAdapter {
     }
     this.server = server;
     this.readOnlyTools = new Set(readOnlyTools);
+    this.readinessCheck = readinessCheck === undefined
+      ? undefined
+      : structuredClone(readinessCheck);
     this.operations = new Map(capability.operations.map((operation) => [
       operation.operation,
       structuredClone(operation)
@@ -502,6 +571,13 @@ export class McpCapabilityAdapter {
     ) {
       return { status: "invalid-input" };
     }
+    if (!await checkPrivateCapabilityReadiness(
+      this.server,
+      this.readinessCheck,
+      this.readOnlyTools
+    )) {
+      return { status: "unavailable" };
+    }
     return normalizeMcpToolResult(await this.server.callTool({
       name: operation.tool,
       arguments: structuredClone(request.input)
@@ -510,10 +586,14 @@ export class McpCapabilityAdapter {
 }
 
 class McpCapabilityActionAdapter {
-  constructor({ server, action, toolRisks }) {
+  constructor({ server, action, toolRisks, readOnlyTools, readinessCheck }) {
     this.server = server;
     this.action = structuredClone(action);
     this.toolRisks = new Map(toolRisks);
+    this.readOnlyTools = new Set(readOnlyTools);
+    this.readinessCheck = readinessCheck === undefined
+      ? undefined
+      : structuredClone(readinessCheck);
   }
 
   async prepare(request) {
@@ -523,6 +603,13 @@ class McpCapabilityActionAdapter {
       !validateAdapterInput(request.input, this.action.input_constraints)
     ) {
       return { status: "invalid-input" };
+    }
+    if (!await checkPrivateCapabilityReadiness(
+      this.server,
+      this.readinessCheck,
+      this.readOnlyTools
+    )) {
+      return { status: "unavailable" };
     }
     const normalized = normalizeMcpToolResult(await this.server.callTool({
       name: this.action.prepare_tool,
@@ -562,6 +649,13 @@ class McpCapabilityActionAdapter {
       !requirePendingPayload(payload, this.action.confirmation.passthrough_fields)
     ) {
       return { status: "invalid-input" };
+    }
+    if (!await checkPrivateCapabilityReadiness(
+      this.server,
+      this.readinessCheck,
+      this.readOnlyTools
+    )) {
+      return { status: "unavailable" };
     }
     return normalizeMcpToolResult(await this.server.callTool({
       name: this.action.confirm_tool,
@@ -618,6 +712,16 @@ export function compilePrivateCapabilityPacks({ packs = [], servers = new Map() 
       }
     }
   }
+  for (const pack of validated) {
+    if (pack.readiness_check) {
+      const mapping = `${pack.server_ref}\0${pack.readiness_check.tool}`;
+      if (mappedServerTools.has(mapping)) {
+        throw new TypeError(
+          "readiness check tool must not map to a semantic capability operation"
+        );
+      }
+    }
+  }
   const capabilities = [];
   const adapters = new Map();
   const actionCapabilities = [];
@@ -628,14 +732,18 @@ export function compilePrivateCapabilityPacks({ packs = [], servers = new Map() 
       throw new TypeError("MCP server callTool is required");
     }
     const readOnlyTools = server?.[TRUSTED_READ_ONLY_TOOLS];
+    const readinessChecks = server?.[TRUSTED_READINESS_CHECKS];
     const toolRisks = server?.[TRUSTED_TOOL_RISKS];
+    const packReady = pack.readiness_check === undefined || (
+      readinessChecks instanceof Map &&
+      readinessChecks.get(pack.readiness_check.tool) === true
+    );
     for (const capability of pack.capabilities) {
       if (capabilities.some((item) => item.capability === capability.capability)) {
         throw new TypeError("semantic capability identifiers must be unique");
       }
-      const ready = readOnlyTools instanceof Set && capability.operations.every(({ tool }) => (
-        readOnlyTools.has(tool)
-      ));
+      const ready = packReady && readOnlyTools instanceof Set &&
+        capability.operations.every(({ tool }) => readOnlyTools.has(tool));
       capabilities.push({
         capability: capability.capability,
         purpose: capability.purpose,
@@ -649,7 +757,8 @@ export function compilePrivateCapabilityPacks({ packs = [], servers = new Map() 
         adapters.set(capability.capability, new McpCapabilityAdapter({
           server,
           capability,
-          readOnlyTools
+          readOnlyTools,
+          readinessCheck: pack.readiness_check
         }));
       }
     }
@@ -660,7 +769,7 @@ export function compilePrivateCapabilityPacks({ packs = [], servers = new Map() 
       ) {
         throw new TypeError("semantic action capability identifiers must be unique");
       }
-      const ready = toolRisks instanceof Map &&
+      const ready = packReady && toolRisks instanceof Map &&
         toolRisks.get(action.prepare_tool) === "prepare" &&
         toolRisks.get(action.confirm_tool) === "write";
       actionCapabilities.push({
@@ -676,7 +785,9 @@ export function compilePrivateCapabilityPacks({ packs = [], servers = new Map() 
         actionAdapters.set(action.capability, new McpCapabilityActionAdapter({
           server,
           action,
-          toolRisks
+          toolRisks,
+          readOnlyTools,
+          readinessCheck: pack.readiness_check
         }));
       }
     }

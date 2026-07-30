@@ -62,6 +62,10 @@ function guard(calls = []) {
   });
 }
 
+async function sendNotification() {
+  return { status: "complete" };
+}
+
 function publicGateway(adapter, extraCapabilities = [], extraAdapters = []) {
   return new CapabilityGateway({
     capabilities: [PUBLIC_WEB_SEARCH_CAPABILITY, ...extraCapabilities],
@@ -262,6 +266,7 @@ test("普通业务问题通过公共 Web Search 查询后回到同一决策循�
 test("公开查询失败后直接转人工且不静默改用其他信任域", async () => {
   const runtimeState = state();
   const larkCalls = [];
+  const privateNotifications = [];
   let internalCalls = 0;
   let decisions = 0;
   const internalCapability = {
@@ -291,6 +296,10 @@ test("公开查询失败后直接转人工且不静默改用其他信任域", as
       state: runtimeState,
       guard: guard(larkCalls),
       capabilityGateway,
+      sendNotification: async (request) => {
+        privateNotifications.push(structuredClone(request));
+        return { status: "complete" };
+      },
       runCodex: async (input) => {
         decisions += 1;
         if ((input.capability_feedback ?? []).length === 0) {
@@ -346,8 +355,72 @@ test("公开查询失败后直接转人工且不静默改用其他信任域", as
     assert.equal(internalCalls, 0);
     assert.equal(larkCalls.some((argv) => argv.includes("不应在公开查询失败后发送")), false);
     assert.equal(result.response.mode, "suggestion");
-    assert.match(result.response.text, /未返回可读内容.*人工检查/u);
+    assert.match(result.response.text, /公开信息暂时无法查询/u);
+    assert.equal(privateNotifications.length, 0);
     assert.doesNotMatch(JSON.stringify(result), /must-not-use|改用内部资料/u);
+  } finally {
+    runtimeState.close();
+  }
+});
+
+test("公开查询失败时清除模型残留的主体提醒标记", async () => {
+  const runtimeState = state();
+  const privateNotifications = [];
+  let decisions = 0;
+  try {
+    const service = new TwinService({
+      config: config(),
+      state: runtimeState,
+      guard: guard(),
+      capabilityGateway: publicGateway(new PublicWebSearchAdapter({
+        codexBin: "/fixture/codex",
+        codexEnvironmentRoot: "/fixture/codex-environment",
+        runner: async () => { throw new Error("fixture public search failed"); }
+      })),
+      sendNotification: async (request) => {
+        privateNotifications.push(structuredClone(request));
+        return { status: "complete" };
+      },
+      runCodex: async (input) => {
+        decisions += 1;
+        if ((input.capability_feedback ?? []).length === 0) {
+          return {
+            event_id: input.event_id,
+            outcome: "reply",
+            reason: "需要公开查询",
+            response: { mode: "representative", text: "我先查询。" },
+            commands: [],
+            lookup_requests: [{
+              capability: "public.web.search",
+              operation: "search",
+              input: { query: "合成公开信息" },
+              reason: "核实公开信息"
+            }],
+            source_refs: [input.message_id]
+          };
+        }
+        return {
+          event_id: input.event_id,
+          outcome: "confirm",
+          reason: "错误地要求主体决定",
+          response: { mode: "confirmation", text: "你希望通过还是驳回？" },
+          commands: [],
+          lookup_requests: [],
+          source_refs: [input.message_id]
+        };
+      }
+    });
+
+    const result = await service.handle(event({
+      event_id: "evt-public-search-stale-attention",
+      message_id: "om_public_search_stale_attention"
+    }));
+
+    assert.equal(decisions, 2);
+    assert.match(result.response.text, /公开信息暂时无法查询/u);
+    assert.equal(result.requires_principal_attention, undefined);
+    assert.equal(result.principal_attention_code, undefined);
+    assert.equal(privateNotifications.length, 0);
   } finally {
     runtimeState.close();
   }

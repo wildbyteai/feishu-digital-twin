@@ -129,6 +129,7 @@ export function normalizeInboundMessage(raw, { source, principal } = {}) {
   }
 
   const messageId = raw.message_id;
+  const createTime = toIsoTimestamp(raw.create_time);
   const updateTime = toIsoTimestamp(raw.update_time ?? raw.create_time);
   const senderId = senderOpenId(raw);
   const messageType = raw.message_type ?? raw.msg_type;
@@ -150,14 +151,14 @@ export function normalizeInboundMessage(raw, { source, principal } = {}) {
 
   return {
     event: {
-      event_id: `message:${messageId}:${updateTime}`,
+      event_id: `message:${messageId}:${createTime}`,
       delivery_event_id: raw.event_id ?? null,
       source,
       chat_id: raw.chat_id,
       chat_type: raw.chat_type,
       message_id: messageId,
       sender_open_id: senderId,
-      sent_at: toIsoTimestamp(raw.create_time),
+      sent_at: createTime,
       update_time: updateTime,
       message_type: messageType,
       text: projectedContent.text,

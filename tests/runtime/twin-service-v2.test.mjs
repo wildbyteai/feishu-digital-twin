@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { normalizeInboundMessage } from "../../intake/src/inbound-normalizer.mjs";
 import { LarkGuard } from "../../executor/src/lark-guard.mjs";
 import { CapabilityActionGateway } from "../../runtime/src/capability-action-gateway.mjs";
 import { RuntimeState } from "../../runtime/src/runtime-state.mjs";
@@ -44,6 +45,19 @@ function config(overrides = {}) {
 function state() {
   const database = path.join(mkdtempSync(path.join(tmpdir(), "twin-service-")), "state.sqlite");
   return new RuntimeState(database, { clock: () => "2026-07-16T10:00:00.000Z" });
+}
+
+function testGuard(calls = []) {
+  return new LarkGuard({
+    larkBin: "lark-cli",
+    profile: "example_profile",
+    principalName: "示例负责人",
+    allowedDomains: config().allowed_lark_domains,
+    runner: async (argv) => {
+      calls.push(argv);
+      return { exit_code: 0, stdout: JSON.stringify({ ok: true, data: {} }), stderr: "" };
+    }
+  });
 }
 
 test("交给 AI 的官方执行反馈有总量、深度和数组上限，错误不含原始正文", () => {
@@ -302,24 +316,20 @@ test("普通群消息补读同群上下文后再由 AI 决定是否回复", asyn
   }
 });
 
-test("父消息已有内部流程链接时原会话直接使用该链接而不再次索要", async () => {
+test("父消息已有内部流程链接但正文未读取时不编造结论并通知主体", async () => {
   const runtimeState = state();
   const calls = [];
-  const guard = new LarkGuard({
-    larkBin: "/opt/homebrew/bin/lark-cli",
-    profile: "example_profile",
-    principalName: "示例负责人",
-    allowedDomains: config().allowed_lark_domains,
-    runner: async (argv) => {
-      calls.push(argv);
-      return { exit_code: 0, stdout: JSON.stringify({ ok: true, data: {} }), stderr: "" };
-    }
-  });
+  const privateNotifications = [];
+  const guard = testGuard(calls);
   try {
     const service = new TwinService({
       config: config(),
       state: runtimeState,
       guard,
+      sendNotification: async (request) => {
+        privateNotifications.push(structuredClone(request));
+        return { status: "complete" };
+      },
       reader: {
         async getMessages(ids) {
           assert.deepEqual(ids, ["om-workflow-parent"]);
@@ -377,9 +387,11 @@ test("父消息已有内部流程链接时原会话直接使用该链接而不�
     assert.equal(result.diagnostics.context_count, 1);
     assert.equal(
       result.response.text,
-      "🤖 AI助理：当前消息或引用内容无法读取，无法据此形成可靠结论，请人工检查原消息或链接后继续处理。"
+      "🤖 AI助理：收到，我会提醒示例负责人检查原消息或链接后继续处理。"
     );
     assert.doesNotMatch(result.response.text, /重新|再发|提供.*链接/u);
+    assert.equal(privateNotifications.length, 1);
+    assert.equal(result.notifications[0].code, "context_unreadable");
     assert.equal(calls.some((argv) => (
       argv.includes("+messages-reply") &&
       argv.includes("--as") &&
@@ -393,22 +405,18 @@ test("父消息已有内部流程链接时原会话直接使用该链接而不�
 test("回复载荷确实不可读时原会话确定性建议人工处理且不调用 AI", async () => {
   const runtimeState = state();
   const calls = [];
+  const privateNotifications = [];
   let codexCalls = 0;
-  const guard = new LarkGuard({
-    larkBin: "/opt/homebrew/bin/lark-cli",
-    profile: "example_profile",
-    principalName: "示例负责人",
-    allowedDomains: config().allowed_lark_domains,
-    runner: async (argv) => {
-      calls.push(argv);
-      return { exit_code: 0, stdout: JSON.stringify({ ok: true, data: {} }), stderr: "" };
-    }
-  });
+  const guard = testGuard(calls);
   try {
     const service = new TwinService({
       config: config(),
       state: runtimeState,
       guard,
+      sendNotification: async (request) => {
+        privateNotifications.push(structuredClone(request));
+        return { status: "complete" };
+      },
       reader: {
         async getMessages() {
           return {
@@ -443,9 +451,129 @@ test("回复载荷确实不可读时原会话确定性建议人工处理且不�
     assert.equal(result.diagnostics.decision_reason_code, "CONTEXT_UNREADABLE");
     assert.equal(
       result.response.text,
-      "🤖 AI助理：当前消息或引用内容无法读取，无法据此形成可靠结论，请人工检查原消息或链接后继续处理。"
+      "🤖 AI助理：收到，我会提醒示例负责人检查原消息或链接后继续处理。"
     );
+    assert.equal(privateNotifications.length, 1);
+    assert.equal(result.notifications[0].code, "context_unreadable");
     assert.equal(calls.some((argv) => argv.includes("+messages-reply")), true);
+  } finally {
+    runtimeState.close();
+  }
+});
+
+for (const [chatType, label] of [["p2p", "私聊"], ["group", "群聊"]]) {
+  test(`${label}参与者发来不可读内容时回复原会话并单独通知主体用户`, async () => {
+    const runtimeState = state();
+    const replies = [];
+    const privateNotifications = [];
+    try {
+      const service = new TwinService({
+        config: config(),
+        state: runtimeState,
+        guard: testGuard(replies),
+        sendNotification: async (request) => {
+          privateNotifications.push(structuredClone(request));
+          return { status: "complete" };
+        },
+        runCodex: async () => {
+          throw new Error("unreadable content must not reach AI");
+        }
+      });
+
+      const result = await service.handle(event({
+        event_id: `evt-${chatType}-unreadable-content`,
+        chat_id: `oc-${chatType}-unreadable-content`,
+        chat_type: chatType,
+        message_id: `om-${chatType}-unreadable-content`,
+        text: "",
+        signals: { content_unreadable: true }
+      }));
+
+      assert.equal(
+        result.response.text,
+        "🤖 AI助理：收到，我会提醒示例负责人检查原消息或链接后继续处理。"
+      );
+      assert.equal(privateNotifications.length, 1);
+      assert.equal(privateNotifications[0].principalOpenId, "ou_principal");
+      assert.match(privateNotifications[0].text, /无法读取.*原消息或链接/u);
+      assert.equal(result.notifications[0].code, "context_unreadable");
+      assert.equal(replies.some((argv) => argv.includes("+messages-reply")), true);
+    } finally {
+      runtimeState.close();
+    }
+  });
+}
+
+test("群聊参与者请求审批时回复原群并单独通知主体用户", async () => {
+  const runtimeState = state();
+  const replies = [];
+  const privateNotifications = [];
+  let prepareCalls = 0;
+  const capabilityActionGateway = {
+    snapshot() {
+      return [{
+        capability: "fixture.approval.prepare",
+        purpose: "准备合成审批",
+        operations: ["approve"],
+        risk: "approval",
+        trust_zone: "internal",
+        readiness: "ready",
+        input_description: "合成审批标识和决定"
+      }];
+    },
+    async prepare() {
+      prepareCalls += 1;
+      throw new Error("participant request must not prepare an action");
+    },
+    async confirm() {
+      throw new Error("must not confirm");
+    },
+    cancel() {
+      return false;
+    }
+  };
+  try {
+    const service = new TwinService({
+      config: config(),
+      state: runtimeState,
+      guard: testGuard(replies),
+      capabilityActionGateway,
+      sendNotification: async (request) => {
+        privateNotifications.push(structuredClone(request));
+        return { status: "complete" };
+      },
+      runCodex: async (input) => ({
+        event_id: input.event_id,
+        outcome: "confirm",
+        reason: "对方请求审批",
+        response: { mode: "confirmation", text: "建议审批通过。" },
+        commands: [],
+        lookup_requests: [],
+        action_requests: [{
+          capability: "fixture.approval.prepare",
+          operation: "approve",
+          input: { record_id: "fixture-42", decision: "approve" },
+          reason: "准备审批"
+        }],
+        source_refs: [input.message_id]
+      })
+    });
+
+    const result = await service.handle(event({
+      event_id: "evt-group-participant-approval",
+      message_id: "om-group-participant-approval",
+      chat_type: "group",
+      sender_open_id: "ou_member",
+      text: "帮我审批一下"
+    }));
+
+    assert.equal(prepareCalls, 0);
+    assert.equal(result.response.text, "🤖 AI助理：收到，我会提醒示例负责人查看并处理。");
+    assert.deepEqual(result.action_requests, []);
+    assert.equal(privateNotifications.length, 1);
+    assert.equal(privateNotifications[0].principalOpenId, "ou_principal");
+    assert.equal(result.notifications[0].code, "participant_authority_required");
+    assert.equal(replies.some((argv) => argv.includes("+messages-reply")), true);
   } finally {
     runtimeState.close();
   }
@@ -807,6 +935,69 @@ test("不同事件产生相同命令时分别执行，只对同一事件去重",
     await service.handle(event({ event_id: "evt-same-2", message_id: "om_same_2" }));
     const taskExecutions = calls.filter((argv) => argv.includes("task") && !argv.includes("--dry-run"));
     assert.equal(taskExecutions.length, 2);
+  } finally {
+    runtimeState.close();
+  }
+});
+
+test("同一飞书消息的补读重放只回复一次，人工新发相同文字仍正常回复", async () => {
+  const calls = [];
+  let codexCalls = 0;
+  const principal = {
+    open_id: "ou_principal",
+    address_names: ["示例负责人"]
+  };
+  const guard = testGuard(calls);
+  const runtimeState = state();
+  try {
+    const service = new TwinService({
+      config: config(),
+      state: runtimeState,
+      guard,
+      runCodex: async (input) => {
+        codexCalls += 1;
+        return {
+          event_id: input.event_id,
+          outcome: "reply",
+          reason: "回复明确请求",
+          response: { mode: "representative", text: "已收到。" },
+          commands: [],
+          source_refs: [input.message_id]
+        };
+      }
+    });
+    const raw = {
+      chat_id: "oc_repeat_fixture",
+      chat_type: "p2p",
+      message_id: "om_repeat_fixture",
+      sender_id: "ou_member",
+      create_time: "1784078400000",
+      update_time: "1784078400000",
+      message_type: "text",
+      content: "请再回复一次"
+    };
+    const realtime = normalizeInboundMessage(raw, { source: "event", principal }).event;
+    const replay = normalizeInboundMessage({
+      ...raw,
+      update_time: "1784078460000"
+    }, { source: "supplement", principal }).event;
+    const manualRepeat = normalizeInboundMessage({
+      ...raw,
+      message_id: "om_repeat_fixture_manual",
+      create_time: "1784078520000",
+      update_time: "1784078520000"
+    }, { source: "event", principal }).event;
+
+    assert.equal((await service.handle(realtime)).outcome, "reply");
+    assert.equal((await service.handle(replay)).reason_code, "DUPLICATE_EVENT");
+    assert.equal((await service.handle(manualRepeat)).outcome, "reply");
+    assert.equal(codexCalls, 2);
+    const replies = calls.filter((argv) => argv.includes("+messages-reply") && !argv.includes("--dry-run"));
+    assert.equal(replies.length, 2);
+    assert.notEqual(
+      replies[0][replies[0].indexOf("--idempotency-key") + 1],
+      replies[1][replies[1].indexOf("--idempotency-key") + 1]
+    );
   } finally {
     runtimeState.close();
   }
@@ -1571,3 +1762,89 @@ test("语义业务动作必须经过准备、本人确认和单次提交", async
     runtimeState.close();
   }
 });
+
+for (const [chatType, label] of [["p2p", "私聊"], ["group", "群聊"]]) {
+  test(`${label}参与者的业务查询失败时自然回复并单独通知主体用户`, async () => {
+    const runtimeState = state();
+    const replies = [];
+    const privateNotifications = [];
+    let decisions = 0;
+    const capabilityGateway = {
+      snapshot() {
+        return [{
+          capability: "fixture.workflow.read",
+          purpose: "读取合成流程",
+          operations: ["get"],
+          risk: "read",
+          trust_zone: "internal",
+          readiness: "ready",
+          input_description: "合成流程标识"
+        }];
+      },
+      async lookup(request) {
+        return {
+          capability: request.capability,
+          operation: request.operation,
+          status: "unavailable"
+        };
+      }
+    };
+    try {
+      const service = new TwinService({
+        config: config(),
+        state: runtimeState,
+        guard: testGuard(replies),
+        capabilityGateway,
+        sendNotification: async (request) => {
+          privateNotifications.push(structuredClone(request));
+          return { status: "complete" };
+        },
+        runCodex: async (input) => {
+          decisions += 1;
+          return {
+            event_id: input.event_id,
+            outcome: "reply",
+            reason: input.capability_feedback.length === 0
+              ? "需要读取业务资料"
+              : "查询暂不可用",
+            response: { mode: "suggestion", text: "正在核实。" },
+            commands: [],
+            lookup_requests: input.capability_feedback.length === 0
+              ? [{
+                  capability: "fixture.workflow.read",
+                  operation: "get",
+                  input: { record_id: "fixture-42" },
+                  reason: "核实业务资料"
+                }]
+              : [],
+            source_refs: [input.message_id]
+          };
+        }
+      });
+
+      const result = await service.handle(event({
+        event_id: `evt-${chatType}-lookup-fallback`,
+        message_id: `om-${chatType}-lookup-fallback`,
+        chat_type: chatType,
+        sender_open_id: "ou_participant",
+        text: "请帮我看看这个业务链接"
+      }));
+
+      assert.equal(decisions, 2);
+      assert.equal(
+        result.response.text,
+        "🤖 AI助理：收到，我会提醒示例负责人检查相关内容后继续处理。"
+      );
+      assert.doesNotMatch(result.response.text, /已批准|人工检查/u);
+      assert.equal(privateNotifications.length, 1);
+      assert.equal(privateNotifications[0].principalOpenId, "ou_principal");
+      assert.match(privateNotifications[0].text, /业务资料.*无法读取/u);
+      assert.equal(result.notifications[0].code, "capability_lookup_failed");
+      assert.equal(replies.filter((argv) => (
+        argv.includes("+messages-reply") && !argv.includes("--dry-run")
+      )).length, 1);
+    } finally {
+      runtimeState.close();
+    }
+  });
+}

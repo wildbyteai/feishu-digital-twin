@@ -27,6 +27,7 @@ The business-decision Codex session remains offline. It sees only semantic capab
 - live outside the product source tree, in a current-user-only directory with a `0600` manifest;
 - use `schema_version: 1` and a semantic `pack_version`;
 - declare `read` tools for lookups; a confirmation-gated action must pair a non-destructive `prepare` tool with a destructive `write` tool, using the `internal` trust zone and `human-fallback`;
+- an MCP integration that requires a login may optionally declare one read-only `readiness_check` tool; the runtime calls it with empty arguments and accepts only `{ "ok": true }` or `{ "ready": true }`, without exposing the health result to Codex;
 - name the exact tool allowlist, semantic operation, allowed and required input fields, byte limit, and confirmation-field mapping;
 - contain no JavaScript, shell hook, credential, cookie, browser material, or model configuration.
 
@@ -41,7 +42,7 @@ The candidate instance configuration explicitly lists installed packs and the lo
 }
 ```
 
-`required_capabilities` only determines whether Doctor reports overall degradation, and it must be a subset of `allowed_capabilities`. An unavailable optional capability fails only that lookup; unrelated Feishu processing continues.
+`required_capabilities` must be a subset of `allowed_capabilities`. An ordinarily unavailable optional capability fails only that lookup. If an explicitly declared authorization readiness check fails, Doctor reports `CAPABILITY_NOT_READY` and marks the overall instance not ready, so an expired login cannot still appear healthy.
 
 ## Install and authorize
 
@@ -55,7 +56,7 @@ feishu-digital-twin setup \
   --approve-capability-trust-zone internal
 ```
 
-`--approve-capability-trust-zone internal` approves only the newly introduced or changed internal data boundary; it is not a daily switch. Changing a pack's MCP server reference, tool binding, trust zone, operation, confirmation mapping, or input constraints requires setup and confirmation again.
+`--approve-capability-trust-zone internal` approves only the newly introduced or changed internal data boundary; it is not a daily switch. Changing a pack's MCP server reference, tool binding, readiness tool, trust zone, operation, confirmation mapping, or input constraints requires setup and confirmation again.
 
 By default, the product does not scan or reuse MCP configuration from the user's main Codex or desktop applications. Only when the instance explicitly sets `reuse_codex_mcp_servers: true` does the runtime execute `codex mcp get` for the exact server references declared by installed packs; it never calls MCP list or discovers another local MCP. Lookup tools must be read-only and non-destructive, prepare tools must be non-read-only and non-destructive, and submit tools must be non-read-only and destructive. Missing or ambiguous annotations fail closed as `unavailable`. The real internal MCP implementation, authentication, and private pack remain deployer-managed and never enter public examples or release artifacts.
 
@@ -76,9 +77,9 @@ feishu-digital-twin doctor
 feishu-digital-twin status
 ```
 
-Doctor uses non-business synthetic checks and reports only the semantic capability identifier, stable readiness code, latency, and required flag. It does not read a real workflow, invoke a business tool, or print private paths, MCP server references, tool names, endpoints, credentials, or result bodies. A successful lookup that contains credential-shaped text fails closed, and opaque source references are dropped.
+Doctor uses non-business checks and reports only the semantic capability identifier, stable readiness code, latency, and required flag. It never reads a real workflow or invokes lookup or approval tools. When a pack explicitly declares `readiness_check`, Doctor invokes only that read-only health tool, discards its body, and evaluates readiness without printing private paths, MCP server references, tool names, endpoints, identities, or credentials. A successful lookup that contains credential-shaped text fails closed, and opaque source references are dropped.
 
-If a lookup or action prepare/submit is unavailable, unauthenticated, unauthorized, timed out, invalid, failed, or empty, the runtime does not switch trust zones or try a browser or local file. It guarantees `human-fallback` in the original authorized conversation, clearly asking for human handling without inventing business content or contacting another person.
+If a lookup or action prepare/submit is unavailable, unauthenticated, unauthorized, timed out, invalid, failed, or empty, the runtime does not switch trust zones or try a browser or local file. A failed public lookup is reported only in the original conversation. For a failed internal-data request, the principal receives a direct instruction to check authorization or the source link. When another participant makes that internal request, the original conversation receives a natural assistant acknowledgement while the principal receives a separate notice. The runtime does not invent business content or ask the requester to confirm on the principal's behalf.
 
 ## Revoke
 

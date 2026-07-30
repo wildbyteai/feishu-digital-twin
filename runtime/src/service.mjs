@@ -10,7 +10,10 @@ import {
 } from "../../shared/daily-memory-trigger.mjs";
 import { processEvent } from "./process-event.mjs";
 import { runCodexDecision } from "./codex-runner.mjs";
-import { sendPrivateConfirmation } from "./confirmation-channel.mjs";
+import {
+  sendPrivateConfirmation,
+  sendPrivateNotification
+} from "./confirmation-channel.mjs";
 import {
   assertDailyMemoryCommand,
   assertDailyMemoryCompletion,
@@ -172,19 +175,55 @@ function actionLimitDecision(decision) {
   };
 }
 
-function capabilityFallbackDecision(decision, principalName) {
+function capabilityFallbackDecision(decision, principalName, {
+  notifyPrincipal = false,
+  trustZone
+} = {}) {
+  const shouldNotifyPrincipal = notifyPrincipal && trustZone === "internal";
+  const {
+    requires_principal_attention: _requiresPrincipalAttention,
+    principal_attention_code: _principalAttentionCode,
+    ...baseDecision
+  } = decision;
   return {
-    ...decision,
+    ...baseDecision,
     outcome: decision.outcome === "draft" ? "draft" : "reply",
     reason: "capability lookup requires human handling",
     response: {
       mode: "suggestion",
-      text: `${authorityLabel("suggestion", principalName)}已批准的业务资料查询未返回可读内容，无法据此形成可靠结论，请人工检查后继续处理。`
+      text: trustZone === "public"
+        ? `${authorityLabel("suggestion", principalName)}公开信息暂时无法查询，请稍后重试或提供可核实的来源。`
+        : shouldNotifyPrincipal
+        ? `${authorityLabel("suggestion", principalName)}收到，我会提醒${principalName}检查相关内容后继续处理。`
+        : `${authorityLabel("suggestion", principalName)}相关业务资料暂时无法读取，请检查业务系统授权或原始链接后继续处理。`
     },
+    commands: [],
     lookup_requests: [],
+    action_requests: [],
     executable_commands: [],
-    confirmation_commands: []
+    confirmation_commands: [],
+    ...(shouldNotifyPrincipal ? {
+      requires_principal_attention: true,
+      principal_attention_code: "capability_lookup_failed"
+    } : {})
   };
+}
+
+function principalAttentionText(code) {
+  if (code === "participant_authority_required") {
+    return "有人请求处理一项需要你本人决定的操作，请查看对应原消息后处理。";
+  }
+  if (code === "capability_lookup_failed") {
+    return "一项业务资料请求暂时无法读取，请检查对应原消息、业务系统授权或链接后继续处理。";
+  }
+  if (code === "context_unreadable") {
+    return "一条消息或其引用内容无法读取，请检查对应原消息或链接后继续处理。";
+  }
+  return null;
+}
+
+function needsPrivatePrincipalAttention(event, principalOpenId) {
+  return event.sender_open_id !== principalOpenId;
 }
 
 function executionFeedback(command, result, round) {
@@ -420,6 +459,7 @@ export class TwinService {
     capabilityActionGateway,
     runCodex = runCodexDecision,
     sendConfirmation = sendPrivateConfirmation,
+    sendNotification = sendPrivateNotification,
     refreshProductionEnabled = async () => config.production_enabled === true,
     clock = () => new Date().toISOString(),
     sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
@@ -429,6 +469,9 @@ export class TwinService {
       throw new TypeError("refreshProductionEnabled must be a function");
     }
     if (typeof sleep !== "function") throw new TypeError("sleep must be a function");
+    if (typeof sendNotification !== "function") {
+      throw new TypeError("sendNotification must be a function");
+    }
     if (capabilityGateway !== undefined && (
       typeof capabilityGateway?.snapshot !== "function" ||
       typeof capabilityGateway?.lookup !== "function"
@@ -453,6 +496,7 @@ export class TwinService {
     this.capabilityActionGateway = capabilityActionGateway;
     this.runCodex = runCodex;
     this.sendConfirmation = sendConfirmation;
+    this.sendNotification = sendNotification;
     this.refreshProductionEnabled = refreshProductionEnabled;
     this.clock = clock;
     this.sleep = sleep;
@@ -871,6 +915,7 @@ export class TwinService {
         : event;
       const executions = [];
       const confirmations = [];
+      const notifications = [];
       const feedback = [];
       const lookups = [];
       const capabilityActions = [];
@@ -968,7 +1013,13 @@ export class TwinService {
             (decision.confirmation_commands ?? []).length > 0
           )
         ) {
-          decision = capabilityFallbackDecision(decision, this.config.principal.name);
+          decision = capabilityFallbackDecision(decision, this.config.principal.name, {
+            notifyPrincipal: needsPrivatePrincipalAttention(
+              event,
+              this.config.principal.open_id
+            ),
+            trustZone: lookupTrustZone
+          });
           break;
         }
 
@@ -980,7 +1031,13 @@ export class TwinService {
               status: "denied"
             }, actionRounds + 1));
           }
-          decision = capabilityFallbackDecision(decision, this.config.principal.name);
+          decision = capabilityFallbackDecision(decision, this.config.principal.name, {
+            notifyPrincipal: needsPrivatePrincipalAttention(
+              event,
+              this.config.principal.open_id
+            ),
+            trustZone: lookupTrustZone
+          });
           break;
         }
         if (lookups.length > 0 && (decision.executable_commands ?? []).length > 0) {
@@ -1055,7 +1112,8 @@ export class TwinService {
               }
             : this.capabilityGateway
               ? await this.capabilityGateway.lookup(request, {
-                  current_message_text: hydrated.text
+                  current_message_text: hydrated.text,
+                  current_message_links: hydrated.links ?? []
                 })
               : {
                   capability: request.capability,
@@ -1217,7 +1275,10 @@ export class TwinService {
         (decision.executable_commands ?? []).length === 0 &&
         (decision.confirmation_commands ?? []).length === 0
       ) {
-        decision = capabilityFallbackDecision(decision, this.config.principal.name);
+        decision = capabilityFallbackDecision(decision, this.config.principal.name, {
+          notifyPrincipal: needsPrivatePrincipalAttention(event, this.config.principal.open_id),
+          trustZone: lookupTrustZone
+        });
       }
 
       if (retryingReply && (!decision.response || decision.outcome === "draft")) {
@@ -1231,6 +1292,34 @@ export class TwinService {
           folderToken: this.config.daily_memory.folder_token,
           principalName: this.config.principal.name
         });
+      }
+
+      if (
+        decision.requires_principal_attention === true &&
+        needsPrivatePrincipalAttention(event, this.config.principal.open_id)
+      ) {
+        const text = principalAttentionText(decision.principal_attention_code);
+        if (text !== null) {
+          const delivery = await this.sendNotification({
+            larkBin: this.config.lark_cli_bin ?? "lark-cli",
+            profile: this.config.profile,
+            principalOpenId: this.config.principal.open_id,
+            principalName: this.config.principal.name,
+            text,
+            idempotencyKey: shortIdempotencyKey(
+              "twin-notice",
+              `${event.event_id}:${decision.principal_attention_code}`
+            ),
+            productionEnabled: this.config.production_enabled === true
+          });
+          if (delivery.status === "failed") {
+            throw new Error("private notification delivery failed");
+          }
+          notifications.push({
+            code: decision.principal_attention_code,
+            delivery
+          });
+        }
       }
 
       if (
@@ -1277,6 +1366,7 @@ export class TwinService {
         lookups,
         capability_actions: capabilityActions,
         confirmations,
+        notifications,
         reply_retry: retryingReply,
         diagnostics: contextDiagnostics(hydrated, decision)
       };

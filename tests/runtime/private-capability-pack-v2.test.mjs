@@ -113,6 +113,175 @@ test("声明式私有能力包只暴露语义能力并调用显式服务器的�
   );
 });
 
+test("私有能力包声明授权健康检查后，授权失效时能力不可用", async () => {
+  const calls = [];
+  const pack = privatePack({
+    tools: [
+      { name: "records.auth-status", risk: "read" },
+      { name: "records.get", risk: "read" }
+    ],
+    readiness_check: { tool: "records.auth-status" }
+  });
+  const compiled = await compileWithResolvedServers({
+    packs: [pack],
+    servers: new Map([["example-managed-records", readOnlyServer({
+      async callTool(request) {
+        calls.push(structuredClone(request));
+        if (request.name === "records.auth-status") {
+          return {
+            structuredContent: {
+              ok: false,
+              reauthRequired: true,
+              code: "AUTH_REQUIRED"
+            }
+          };
+        }
+        throw new Error("授权失效时不能调用业务工具");
+      }
+    }, ["records.auth-status", "records.get"])]]),
+  });
+
+  assert.deepEqual(calls, [{ name: "records.auth-status", arguments: {} }]);
+  assert.equal(compiled.capabilities[0].readiness, "unavailable");
+  assert.equal(compiled.adapters.has("example.records.read"), false);
+});
+
+test("同一 MCP 服务器上某个能力包未授权时不影响其他能力包", async () => {
+  const protectedPack = privatePack({
+    tools: [
+      { name: "records.auth-status", risk: "read" },
+      { name: "records.get", risk: "read" }
+    ],
+    readiness_check: { tool: "records.auth-status" }
+  });
+  const independentPack = privatePack({
+    pack_id: "example.catalog",
+    tools: [{ name: "catalog.get", risk: "read" }],
+    capabilities: [{
+      ...structuredClone(privatePack().capabilities[0]),
+      capability: "example.catalog.read",
+      operations: [{
+        ...structuredClone(privatePack().capabilities[0].operations[0]),
+        tool: "catalog.get"
+      }]
+    }]
+  });
+  const compiled = await compileWithResolvedServers({
+    packs: [protectedPack, independentPack],
+    servers: new Map([["example-managed-records", readOnlyServer({
+      async callTool(request) {
+        if (request.name === "records.auth-status") {
+          return { structuredContent: { ok: false, code: "AUTH_REQUIRED" } };
+        }
+        if (request.name === "catalog.get") {
+          return { structuredContent: { title: "合成目录" } };
+        }
+        throw new Error("未授权能力不得调用业务工具");
+      }
+    }, ["records.auth-status", "records.get", "catalog.get"])]]),
+  });
+  const gateway = new CapabilityGateway(compiled);
+  const readiness = new Map(gateway.snapshot().map((item) => [
+    item.capability,
+    item.readiness
+  ]));
+
+  assert.equal(readiness.get("example.records.read"), "unavailable");
+  assert.equal(readiness.get("example.catalog.read"), "ready");
+  assert.equal((await gateway.lookup({
+    capability: "example.catalog.read",
+    operation: "get",
+    input: { record_id: "fixture-42" },
+    reason: "验证独立能力包"
+  })).status, "complete");
+});
+
+test("同一 MCP 服务器上的多个能力包可复用同一授权健康工具", async () => {
+  const first = privatePack({
+    tools: [
+      { name: "records.auth-status", risk: "read" },
+      { name: "records.get", risk: "read" }
+    ],
+    readiness_check: { tool: "records.auth-status" }
+  });
+  const second = privatePack({
+    pack_id: "example.catalog",
+    tools: [
+      { name: "records.auth-status", risk: "read" },
+      { name: "catalog.get", risk: "read" }
+    ],
+    readiness_check: { tool: "records.auth-status" },
+    capabilities: [{
+      ...structuredClone(privatePack().capabilities[0]),
+      capability: "example.catalog.read",
+      operations: [{
+        ...structuredClone(privatePack().capabilities[0].operations[0]),
+        tool: "catalog.get"
+      }]
+    }]
+  });
+  let readinessCalls = 0;
+  const compiled = await compileWithResolvedServers({
+    packs: [first, second],
+    servers: new Map([["example-managed-records", readOnlyServer({
+      async callTool(request) {
+        if (request.name === "records.auth-status") {
+          readinessCalls += 1;
+          return { structuredContent: { ok: true } };
+        }
+        return { structuredContent: { title: "合成记录" } };
+      }
+    }, ["records.auth-status", "records.get", "catalog.get"])]]),
+  });
+
+  assert.deepEqual(compiled.capabilities.map(({ readiness }) => readiness), ["ready", "ready"]);
+  assert.equal(readinessCalls, 1);
+});
+
+test("运行期间授权失效时先停止业务调用并返回不可用", async () => {
+  let authorized = true;
+  const calls = [];
+  const pack = privatePack({
+    tools: [
+      { name: "records.auth-status", risk: "read" },
+      { name: "records.get", risk: "read" }
+    ],
+    readiness_check: { tool: "records.auth-status" }
+  });
+  const compiled = await compileWithResolvedServers({
+    packs: [pack],
+    servers: new Map([["example-managed-records", readOnlyServer({
+      async callTool(request) {
+        calls.push(request.name);
+        if (request.name === "records.auth-status") {
+          return {
+            structuredContent: authorized
+              ? { ok: true, reauthRequired: false, code: "READY" }
+              : { ok: false, reauthRequired: true, code: "AUTH_REQUIRED" }
+          };
+        }
+        return {
+          structuredContent: { title: "不应在授权失效后读取" }
+        };
+      }
+    }, ["records.auth-status", "records.get"])]]),
+  });
+  const gateway = new CapabilityGateway(compiled);
+  assert.equal(compiled.capabilities[0].readiness, "ready");
+
+  authorized = false;
+  const result = await gateway.lookup({
+    capability: "example.records.read",
+    operation: "get",
+    input: { record_id: "fixture-42" },
+    reason: "验证运行期间授权状态"
+  });
+
+  assert.equal(result.status, "unavailable");
+  assert.deepEqual(calls, ["records.auth-status", "records.auth-status"]);
+  assert.equal(calls.includes("records.get"), false);
+});
+
 test("私有能力包拒绝写风险、白名单外工具、可执行内容和凭据", () => {
   const invalidPacks = [
     {
@@ -317,6 +486,11 @@ test("公共中性能力包示例符合版本化声明契约", () => {
   assert.equal(schema.$schema, "https://json-schema.org/draft/2020-12/schema");
   assert.equal(schema.properties.schema_version.const, 1);
   assert.equal(schema.additionalProperties, false);
+  assert.equal(schema.properties.readiness_check.required[0], "tool");
+  assert.equal(
+    schema.properties.readiness_check.properties.tool.$ref,
+    "#/$defs/portableIdentifier"
+  );
   assert.deepEqual(
     schema.properties.tools.items.properties.risk.enum,
     ["read", "prepare", "write"]

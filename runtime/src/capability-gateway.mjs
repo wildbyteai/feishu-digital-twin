@@ -314,7 +314,17 @@ function projectTrustedContext(trustZone, trustedContext) {
 
 function trustedRequestSourceRefs(request, trustedContext) {
   const currentMessageText = trustedContext?.current_message_text;
-  if (typeof currentMessageText !== "string" || currentMessageText.length === 0) return [];
+  const currentMessageLinks = Array.isArray(trustedContext?.current_message_links)
+    ? new Set(trustedContext.current_message_links.filter((value) => (
+        typeof value === "string" && value.length > 0
+      )))
+    : new Set();
+  if (
+    (typeof currentMessageText !== "string" || currentMessageText.length === 0) &&
+    currentMessageLinks.size === 0
+  ) {
+    return [];
+  }
   const sourceRefs = new Set();
   const visit = (value) => {
     if (typeof value === "string") {
@@ -326,9 +336,12 @@ function trustedRequestSourceRefs(request, trustedContext) {
       }
       if (
         (url.protocol === "http:" || url.protocol === "https:") &&
-        currentMessageText.includes(value)
+        (
+          currentMessageLinks.has(url.href) ||
+          (typeof currentMessageText === "string" && currentMessageText.includes(value))
+        )
       ) {
-        sourceRefs.add(value);
+        sourceRefs.add(url.href);
       }
       return;
     }

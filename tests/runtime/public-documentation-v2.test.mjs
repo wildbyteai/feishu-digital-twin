@@ -183,6 +183,13 @@ test("公开分发策略固定为受保护主干和无标签 npx", () => {
   assert.doesNotMatch(content, /发布 GitHub Release、Marketplace、npm/u);
 });
 
+test("公开产品规格与运行时统一使用 AI 助理标识", () => {
+  const content = read("docs/public/product-spec.md");
+
+  assert.match(content, /🤖 AI助理：/u);
+  assert.doesNotMatch(content, /【数字分身】|【建议】|【待<主体用户名称>确认】/u);
+});
+
 test("根 README 只用三个主步骤引导真实安装并链接全部详细指引", () => {
   for (const [relativePath, heading] of [
     ["README.md", "## 三步开始"],

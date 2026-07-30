@@ -153,7 +153,7 @@ test("未明确寻址的普通群消息和单聊要求补读同会话上下文",
   assert.equal(image.event.signals.context_lookup_required, false);
 });
 
-test("官方事件与用户补读使用同一消息幂等键", () => {
+test("同一消息的官方事件与后续补读使用同一幂等键", () => {
   const raw = {
     event_id: "evt_delivery",
     chat_id: "oc_simulated_group",
@@ -167,12 +167,37 @@ test("官方事件与用户补读使用同一消息幂等键", () => {
   };
   const realtime = normalizeInboundMessage(raw, { source: "event", principal });
   const { event_id: _deliveryId, ...supplementRaw } = raw;
-  const supplement = normalizeInboundMessage(supplementRaw, {
+  const supplement = normalizeInboundMessage({
+    ...supplementRaw,
+    update_time: "1784078460000"
+  }, {
     source: "supplement",
     principal
   });
   assert.equal(realtime.event.event_id, supplement.event.event_id);
   assert.equal(realtime.event.delivery_event_id, "evt_delivery");
+});
+
+test("人工新发相同文字仍形成新的消息幂等键", () => {
+  const raw = {
+    chat_id: "oc_simulated_group",
+    chat_type: "group",
+    sender_id: "ou_sender",
+    create_time: "1784078400000",
+    update_time: "1784078400000",
+    message_type: "text",
+    content: "请重新回复"
+  };
+  const first = normalizeInboundMessage({
+    ...raw,
+    message_id: "om_manual_repeat_1"
+  }, { source: "supplement", principal });
+  const repeated = normalizeInboundMessage({
+    ...raw,
+    message_id: "om_manual_repeat_2"
+  }, { source: "supplement", principal });
+
+  assert.notEqual(first.event.event_id, repeated.event.event_id);
 });
 
 test("回复改名前的历史消息仍识别为继续数字分身话题", async () => {
