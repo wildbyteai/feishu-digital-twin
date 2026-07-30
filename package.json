@@ -123,6 +123,7 @@
     "shared/authority-labels.mjs",
     "shared/daily-memory-trigger.mjs",
     "shared/lark-capability-catalog.mjs",
+    "shared/lark-cli-transport.mjs",
     "shared/subprocess-environment.mjs",
     "skills/feishu-daily-work-memory/agents/openai.yaml",
     "skills/feishu-daily-work-memory/SKILL.md",

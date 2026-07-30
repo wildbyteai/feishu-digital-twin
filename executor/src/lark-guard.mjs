@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 
 import {
@@ -6,7 +5,7 @@ import {
   hasAuthorityLabel,
   stripAuthorityLabel
 } from "../../shared/authority-labels.mjs";
-import { buildLarkEnvironment } from "../../shared/subprocess-environment.mjs";
+import { runLarkCommand } from "../../shared/lark-cli-transport.mjs";
 
 const RUNTIME_FLAGS = ["--yes", "--dry-run", "--as", "--profile", "--format"];
 const RESERVED_DOMAINS = new Set([
@@ -309,28 +308,6 @@ function validateAction(action, allowedDomains, protectedValues, principalName) 
       throw new Error("automated public messages must include a trusted authority label");
     }
   }
-}
-
-export function runLarkCommand(argv, { cwd = process.cwd() } = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(argv[0], argv.slice(1), {
-      cwd,
-      env: buildLarkEnvironment(),
-      stdio: ["ignore", "pipe", "pipe"]
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
-    child.once("error", reject);
-    child.once("close", (code) => resolve({
-      exit_code: code ?? 1,
-      stdout,
-      stderr
-    }));
-  });
 }
 
 export class LarkGuard {

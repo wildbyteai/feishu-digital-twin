@@ -180,6 +180,7 @@ test("公共快照清单覆盖现有完整产品面且排除私有区域", () =>
     "runtime/src/twin-runtime.mjs",
     "shared/authority-labels.mjs",
     "shared/lark-capability-catalog.mjs",
+    "shared/lark-cli-transport.mjs",
     "skills/feishu-daily-work-memory/SKILL.md",
     "skills/feishu-digital-twin-control/SKILL.md",
     "skills/feishu-digital-twin/SKILL.md",
@@ -419,6 +420,7 @@ test("本地 npm tarball 禁止 registry 发布并使用显式公共文件白名
     "runtime/src/daily-memory-privacy.mjs",
     "runtime/src/private-capability-pack.mjs",
     "shared/lark-capability-catalog.mjs",
+    "shared/lark-cli-transport.mjs",
     "skills/feishu-digital-twin/SKILL.md",
     "tests/runtime/private-capability-pack-v2.test.mjs"
   ];

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { LarkGuard, runLarkCommand } from "../../executor/src/lark-guard.mjs";
+import { LarkGuard } from "../../executor/src/lark-guard.mjs";
+import { runLarkCommand } from "../../shared/lark-cli-transport.mjs";
 
 const larkBin = "/opt/homebrew/bin/lark-cli";
 
@@ -35,6 +36,78 @@ test("lark-cli 子进程不会继承模型与宿主密钥", async () => {
       else process.env[name] = value;
     }
   }
+});
+
+test("lark-cli transport 超时后返回稳定失败并终止子进程", async () => {
+  const startedAt = Date.now();
+  const result = await runLarkCommand([
+    process.execPath,
+    "--input-type=module",
+    "-e",
+    "process.on('SIGTERM', () => {}); setInterval(() => {}, 1_000);"
+  ], {
+    timeoutMs: 50
+  });
+
+  assert.equal(result.exit_code, 1);
+  assert.equal(result.stdout, "");
+  assert.deepEqual(JSON.parse(result.stderr), {
+    ok: false,
+    error: { type: "timeout" }
+  });
+  const elapsedMs = Date.now() - startedAt;
+  assert.equal(elapsedMs >= 900, true);
+  assert.equal(elapsedMs < 3_000, true);
+});
+
+test("lark-cli transport 按 stdout 与 stderr 合计字节数限制输出", async () => {
+  const result = await runLarkCommand([
+    process.execPath,
+    "--input-type=module",
+    "-e",
+    "process.stdout.write('x'.repeat(700)); process.stderr.write('y'.repeat(700)); setInterval(() => {}, 1_000);"
+  ], {
+    timeoutMs: 200,
+    maxOutputBytes: 1_024,
+    terminationGraceMs: 20
+  });
+
+  assert.equal(result.exit_code, 1);
+  assert.equal(result.stdout, "");
+  assert.deepEqual(JSON.parse(result.stderr), {
+    ok: false,
+    error: { type: "output_limit" }
+  });
+});
+
+test("lark-cli transport 把启动失败归一化为脱敏稳定结果", async () => {
+  const result = await runLarkCommand([
+    "/definitely-missing-feishu-digital-twin-command"
+  ], {
+    timeoutMs: 50,
+    terminationGraceMs: 0
+  });
+
+  assert.deepEqual(result, {
+    exit_code: 1,
+    stdout: "",
+    stderr: JSON.stringify({ ok: false, error: { type: "spawn_failed" } })
+  });
+});
+
+test("lark-cli transport 保留有界子进程的退出码和输出", async () => {
+  const result = await runLarkCommand([
+    process.execPath,
+    "--input-type=module",
+    "-e",
+    "process.stdout.write('visible'); process.stderr.write('safe-error'); process.exitCode = 7;"
+  ]);
+
+  assert.deepEqual(result, {
+    exit_code: 7,
+    stdout: "visible",
+    stderr: "safe-error"
+  });
 });
 
 test("通用 Guard 只接受可信运行时选择的身份，并补充固定 profile、JSON 和 dry-run", () => {

@@ -1,4 +1,4 @@
-import { runLarkCommand } from "../../executor/src/lark-guard.mjs";
+import { runLarkCommand } from "../../shared/lark-cli-transport.mjs";
 import { authorityLabel, stripAuthorityLabel } from "../../shared/authority-labels.mjs";
 
 function privateMessageArgv({

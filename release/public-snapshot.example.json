@@ -114,6 +114,7 @@
     { "path": "shared/authority-labels.mjs", "provenance": "project" },
     { "path": "shared/daily-memory-trigger.mjs", "provenance": "project" },
     { "path": "shared/lark-capability-catalog.mjs", "provenance": "project" },
+    { "path": "shared/lark-cli-transport.mjs", "provenance": "project" },
     { "path": "shared/subprocess-environment.mjs", "provenance": "project" },
     { "path": "skills/feishu-daily-work-memory/agents/openai.yaml", "provenance": "project" },
     { "path": "skills/feishu-daily-work-memory/SKILL.md", "provenance": "project" },

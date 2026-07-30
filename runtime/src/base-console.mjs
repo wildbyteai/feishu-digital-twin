@@ -1,4 +1,4 @@
-import { runLarkCommand } from "../../executor/src/lark-guard.mjs";
+import { runLarkCommand } from "../../shared/lark-cli-transport.mjs";
 
 export const BASE_CONSOLE_DEFAULT_REFRESH_SECONDS = 10;
 export const BASE_CONSOLE_SETUP_SCHEMA = Object.freeze({
