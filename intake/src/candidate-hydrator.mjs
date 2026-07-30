@@ -27,7 +27,12 @@ function messageTimestamp(message) {
   return timestamp(message?.create_time ?? message?.update_time);
 }
 
-function contextItem(message, event, { requireTimestamp = false, relation } = {}) {
+function contextItem(message, event, {
+  botAppId,
+  principal,
+  requireTimestamp = false,
+  relation
+} = {}) {
   if (
     !message ||
     message.deleted === true ||
@@ -46,9 +51,19 @@ function contextItem(message, event, { requireTimestamp = false, relation } = {}
     messageType: message.message_type ?? message.msg_type
   });
   if (!projectedContent.readable) return null;
+  const senderId = senderOpenId(message) ?? "unknown";
+  const principalName = principal?.name ?? principal?.address_names?.[0] ?? "主体用户";
+  const assistantAuthored = hasCurrentOrLegacyAuthorityLabel(
+    projectedContent.text,
+    principalName
+  ) && (
+    senderId === principal?.open_id ||
+    (typeof botAppId === "string" && senderId === botAppId)
+  );
   return Object.fromEntries(Object.entries({
     message_id: message.message_id,
-    sender_open_id: senderOpenId(message) ?? "unknown",
+    sender_open_id: senderId,
+    assistant_authored: assistantAuthored ? true : undefined,
     content: projectedContent.text,
     links: projectedContent.links.length > 0 ? projectedContent.links : undefined,
     link_only: projectedContent.link_only ? true : undefined,
@@ -92,6 +107,15 @@ function exactReferences(event) {
 
 export async function hydrateCandidate(event, { reader, principal } = {}) {
   if (!reader || !principal?.open_id) throw new TypeError("reader and principal are required");
+  let botAppId;
+  if (typeof reader.currentBotAppId === "function") {
+    try {
+      botAppId = await reader.currentBotAppId();
+    } catch {
+      // A missing Bot identity must not make untrusted labels authoritative.
+    }
+  }
+  const contextOptions = { botAppId, principal };
   const context = [];
   const signals = { ...(event.signals ?? {}) };
   const references = exactReferences(event);
@@ -106,6 +130,7 @@ export async function hydrateCandidate(event, { reader, principal } = {}) {
     const messages = new Map((page.messages ?? []).map((item) => [item.message_id, item]));
     for (const reference of references) {
       const item = contextItem(messages.get(reference.messageId), event, {
+        ...contextOptions,
         relation: reference.relation
       });
       if (item) context.push(item);
@@ -132,7 +157,7 @@ export async function hydrateCandidate(event, { reader, principal } = {}) {
       if (message.message_id === event.message_id || message.message_id === event.reply_to_message_id) {
         continue;
       }
-      appendContext(context, message, event, { relation: "thread" });
+      appendContext(context, message, event, { ...contextOptions, relation: "thread" });
     }
   } else if (
     references.length === 0 &&
@@ -152,7 +177,11 @@ export async function hydrateCandidate(event, { reader, principal } = {}) {
     });
     const recent = [];
     for (const message of page.messages ?? []) {
-      appendContext(recent, message, event, { requireTimestamp: true, relation: "recent" });
+      appendContext(recent, message, event, {
+        ...contextOptions,
+        requireTimestamp: true,
+        relation: "recent"
+      });
     }
     recent.reverse();
     recent.sort((left, right) => Date.parse(left.sent_at) - Date.parse(right.sent_at));

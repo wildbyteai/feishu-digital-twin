@@ -87,6 +87,7 @@ test("普通消息只把决策所需的最小事件、角色上下文和当前�
       {
         message_id: "om_context_twin",
         sender_open_id: `ou_twin_${PRIVATE_CANARY}`,
+        assistant_authored: true,
         content: "🤖【数字分身】库存核对中。",
         chat_id: `oc_context_${PRIVATE_CANARY}`,
         topic_key: "omt_projection",

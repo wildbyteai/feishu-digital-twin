@@ -27,6 +27,30 @@ const AI_SIGNALS = new Set([
   "thread_context"
 ]);
 const CONTEXT_SCOPES = new Set(["none", "reply", "thread", "chat"]);
+const EXACT_REFERENCE_RELATIONS = new Set(["reply", "parent", "root"]);
+const SOURCE_ONLY_FIELDS = new Set([
+  "href",
+  "link",
+  "links",
+  "source_link",
+  "source_links",
+  "source_ref",
+  "source_refs",
+  "source_url",
+  "source_urls",
+  "uri",
+  "url",
+  "urls"
+]);
+const TRANSPORT_ONLY_FIELDS = new Set(["ok", "success"]);
+const TRANSPORT_RESULT_FIELDS = new Set(["result", "status"]);
+const TRANSPORT_ONLY_RESULT_VALUES = new Set([
+  "complete",
+  "completed",
+  "ok",
+  "success",
+  "succeeded"
+]);
 
 function requireText(value, name) {
   if (typeof value !== "string" || value.length === 0) {
@@ -163,8 +187,11 @@ function projectSignalsForAI(signals) {
   ));
 }
 
-function senderRole(item, principal) {
-  if (hasCurrentOrLegacyAuthorityLabel(item?.content ?? item?.text, principal?.name)) {
+function senderRole(item, principal, { trustAssistantLabel = false } = {}) {
+  if (
+    trustAssistantLabel &&
+    hasCurrentOrLegacyAuthorityLabel(item?.content ?? item?.text, principal?.name)
+  ) {
     return "digital_twin";
   }
   if (item?.sender_open_id === principal?.open_id) return "principal";
@@ -175,7 +202,9 @@ function projectContextForAI(context, principal) {
   if (!Array.isArray(context)) return [];
   return context.slice(0, AI_CONTEXT_LIMIT).map((item) => definedEntries({
     message_id: item?.message_id,
-    sender_role: senderRole(item, principal),
+    sender_role: senderRole(item, principal, {
+      trustAssistantLabel: item?.assistant_authored === true
+    }),
     content: item?.content,
     links: Array.isArray(item?.links) ? structuredClone(item.links) : undefined,
     link_only: item?.link_only === true ? true : undefined,
@@ -223,7 +252,7 @@ export function projectEventForAI(event, intent) {
     // The current Skill can request more same-chat history with official lark-cli.
     ...(dailyMemoryIntent ? {} : {
       chat_id: event.chat_id,
-      sender_role: senderRole(event, intent?.principal)
+      sender_role: senderRole(event, intent?.principal, { trustAssistantLabel: false })
     }),
     chat_type: event.chat_type,
     message_id: event.message_id,
@@ -313,10 +342,18 @@ function humanContextFallback(event, state, principal) {
   };
 }
 
-function providedLinks(event) {
+function providedLinks(event, decision) {
+  const citedSources = new Set(decision.source_refs ?? []);
   return new Set([
     ...(Array.isArray(event.links) ? event.links : []),
-    ...(event.context ?? []).flatMap((item) => Array.isArray(item?.links) ? item.links : [])
+    ...(event.context ?? []).flatMap((item) => (
+      Array.isArray(item?.links) && (
+        EXACT_REFERENCE_RELATIONS.has(item.relation) ||
+        citedSources.has(item.message_id)
+      )
+        ? item.links
+        : []
+    ))
   ].map(linkEvidenceKey).filter(Boolean));
 }
 
@@ -352,6 +389,36 @@ function hasReadableFeedbackValue(value) {
     return Object.values(value).some(hasReadableFeedbackValue);
   }
   return false;
+}
+
+function normalizedFieldName(value) {
+  return value
+    .trim()
+    .replaceAll(/([a-z0-9])([A-Z])/gu, "$1_$2")
+    .replaceAll(/[-\s]+/gu, "_")
+    .toLowerCase();
+}
+
+function hasSubstantiveCapabilityValue(value) {
+  if (typeof value === "string") return value.trim().length > 0;
+  if (typeof value === "number" || typeof value === "boolean") return true;
+  if (Array.isArray(value)) return value.some(hasSubstantiveCapabilityValue);
+  if (!value || typeof value !== "object") return false;
+  const entries = Object.entries(value);
+  const transportEnvelope = entries.some(([key]) => (
+    TRANSPORT_ONLY_FIELDS.has(normalizedFieldName(key))
+  ));
+  return entries.some(([key, item]) => {
+    const field = normalizedFieldName(key);
+    if (SOURCE_ONLY_FIELDS.has(field) || TRANSPORT_ONLY_FIELDS.has(field)) return false;
+    if (
+      transportEnvelope &&
+      TRANSPORT_RESULT_FIELDS.has(field) &&
+      typeof item === "string" &&
+      TRANSPORT_ONLY_RESULT_VALUES.has(item.trim().toLowerCase())
+    ) return false;
+    return hasSubstantiveCapabilityValue(item);
+  });
 }
 
 function feedbackSourceLinks(data) {
@@ -398,14 +465,14 @@ function hasReadableCapabilityEvidence(event, links) {
   return (event.capability_feedback ?? []).some((item) => {
     const result = item?.result;
     return result?.status === "complete" &&
-      hasReadableFeedbackValue(result.data) &&
+      hasSubstantiveCapabilityValue(result.data) &&
       (result.source_refs ?? []).some((sourceRef) => links.has(linkEvidenceKey(sourceRef)));
   });
 }
 
 function isLinkIndependentAcknowledgement(decision) {
   if (typeof decision.response?.text !== "string") return false;
-  const text = decision.response.text
+  const text = stripAuthorityLabel(decision.response.text)
     .normalize("NFKC")
     .replaceAll(/\s+/gu, "")
     .replace(/[。！!，,.]+$/u, "");
@@ -413,7 +480,7 @@ function isLinkIndependentAcknowledgement(decision) {
 }
 
 function requiresLinkFallback(event, decision) {
-  const links = providedLinks(event);
+  const links = providedLinks(event, decision);
   return links.size > 0 &&
     !isLinkIndependentAcknowledgement(decision) &&
     !hasReadableExecutionEvidence(event, links) &&
