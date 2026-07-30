@@ -443,12 +443,16 @@ test("公共发行包含完整 Gateway、Web、MCP、Schema、Fake 与契约测�
   const manifest = readJson("package.json");
   const packaged = new Set(manifest.files);
   const requiredEntries = [
+    "CONTEXT.md",
     "examples/capability-pack.example.json",
     "runtime/schemas/capability-pack.schema.json",
+    "runtime/schemas/codex-decision.schema.json",
     "runtime/src/capability-gateway.mjs",
+    "runtime/src/decision-contract.mjs",
     "runtime/src/private-capability-pack.mjs",
     "runtime/src/public-web-search-adapter.mjs",
     "tests/runtime/capability-gateway-v2.test.mjs",
+    "tests/runtime/decision-contract-v2.test.mjs",
     "tests/runtime/private-capability-pack-v2.test.mjs",
     "tests/runtime/public-web-search-v2.test.mjs"
   ];
