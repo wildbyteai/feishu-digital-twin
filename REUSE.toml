@@ -9,6 +9,7 @@ path = [
   ".github/**",
   ".gitignore",
   "CODE_OF_CONDUCT.md",
+  "CONTEXT.md",
   "CONTRIBUTING.md",
   "GOVERNANCE.md",
   "LICENSE",

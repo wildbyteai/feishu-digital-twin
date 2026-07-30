@@ -1,5 +1,5 @@
 import { runCodexDecision } from "./codex-runner.mjs";
-import { validateCapabilityLookupRequest } from "./capability-gateway.mjs";
+import { normalizeDecision } from "./decision-contract.mjs";
 
 const SAFE_MESSAGES = Object.freeze({
   INFERENCE_FAILED: "Codex inference failed",
@@ -9,123 +9,11 @@ const SAFE_MESSAGES = Object.freeze({
   INFERENCE_TIMEOUT: "Codex inference timed out",
   INFERENCE_UNAVAILABLE: "Codex executable is unavailable"
 });
-const LOOKUP_INPUT_JSON_MAX_BYTES = 8 * 1024;
-
 function timeout(value) {
   if (!Number.isInteger(value) || value < 1000 || value > 600000) {
     throw new TypeError("timeoutMs must be an integer between 1000 and 600000");
   }
   return value;
-}
-
-function exactFields(value, fields) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const keys = Object.keys(value).sort();
-  const expected = [...fields].sort();
-  return keys.length === expected.length && keys.every((key, index) => key === expected[index]);
-}
-
-function nonEmptyText(value) {
-  return typeof value === "string" && value.length > 0;
-}
-
-function normalizeCapabilityRequest(request) {
-  let normalized = request;
-  if (typeof request?.input === "string") {
-    if (
-      Buffer.byteLength(request.input) < 2 ||
-      Buffer.byteLength(request.input) > LOOKUP_INPUT_JSON_MAX_BYTES
-    ) {
-      throw new TypeError("lookup input JSON is outside the trusted size limit");
-    }
-    normalized = { ...request, input: JSON.parse(request.input) };
-  }
-  validateCapabilityLookupRequest(normalized);
-  return normalized;
-}
-
-function normalizeCapabilityRequests(requests) {
-  const normalized = [];
-  for (const request of requests) normalized.push(normalizeCapabilityRequest(request));
-  return normalized;
-}
-
-function assertDecisionEnvelope(decision, event) {
-  const fields = [
-    "commands",
-    "event_id",
-    "outcome",
-    "reason",
-    "response",
-    "source_refs"
-  ];
-  if (Object.hasOwn(decision ?? {}, "lookup_requests")) fields.push("lookup_requests");
-  if (Object.hasOwn(decision ?? {}, "action_requests")) fields.push("action_requests");
-  if (!exactFields(decision, fields)) {
-    throw new InferenceError("INFERENCE_INVALID_OUTPUT");
-  }
-  if (decision.event_id !== event.event_id || !nonEmptyText(decision.event_id)) {
-    throw new InferenceError("INFERENCE_INVALID_OUTPUT");
-  }
-  if (!new Set(["ignore", "reply", "confirm"]).has(decision.outcome)) {
-    throw new InferenceError("INFERENCE_INVALID_OUTPUT");
-  }
-  if (
-    !nonEmptyText(decision.reason) ||
-    !Array.isArray(decision.commands) ||
-    decision.commands.length > 5 ||
-    !Array.isArray(decision.source_refs) ||
-    decision.source_refs.length === 0 ||
-    decision.source_refs.some((sourceRef) => !nonEmptyText(sourceRef))
-  ) {
-    throw new InferenceError("INFERENCE_INVALID_OUTPUT");
-  }
-  if (decision.response !== null && (
-    !exactFields(decision.response, ["mode", "text"]) ||
-    !new Set(["representative", "suggestion", "confirmation"]).has(decision.response.mode) ||
-    !nonEmptyText(decision.response.text)
-  )) {
-    throw new InferenceError("INFERENCE_INVALID_OUTPUT");
-  }
-  for (const command of decision.commands) {
-    if (
-      !exactFields(command, ["argv", "confirmation", "reason"]) ||
-      !Array.isArray(command.argv) ||
-      command.argv.length < 2 ||
-      command.argv.some((argument) => !nonEmptyText(argument)) ||
-      !nonEmptyText(command.reason) ||
-      !new Set(["auto", "human"]).has(command.confirmation)
-    ) {
-      throw new InferenceError("INFERENCE_INVALID_OUTPUT");
-    }
-  }
-  const lookupRequests = decision.lookup_requests ?? [];
-  const actionRequests = decision.action_requests ?? [];
-  if (
-    !Array.isArray(lookupRequests) ||
-    !Array.isArray(actionRequests) ||
-    lookupRequests.length + actionRequests.length > 1 ||
-    (actionRequests.length > 0 && decision.commands.length > 0)
-  ) {
-    throw new InferenceError("INFERENCE_INVALID_OUTPUT");
-  }
-  let normalizedLookupRequests;
-  let normalizedActionRequests;
-  try {
-    normalizedLookupRequests = normalizeCapabilityRequests(lookupRequests);
-    normalizedActionRequests = normalizeCapabilityRequests(actionRequests);
-  } catch {
-    throw new InferenceError("INFERENCE_INVALID_OUTPUT");
-  }
-  return {
-    ...decision,
-    ...(Object.hasOwn(decision, "lookup_requests")
-      ? { lookup_requests: normalizedLookupRequests }
-      : {}),
-    ...(Object.hasOwn(decision, "action_requests")
-      ? { action_requests: normalizedActionRequests }
-      : {})
-  };
 }
 
 function classifyError(error) {
@@ -190,7 +78,11 @@ export class CodexInferenceAdapter {
         timeoutMs: this.timeoutMs,
         promptContext
       });
-      return assertDecisionEnvelope(decision, event);
+      try {
+        return normalizeDecision(decision, { eventId: event.event_id });
+      } catch {
+        throw new InferenceError("INFERENCE_INVALID_OUTPUT");
+      }
     } catch (error) {
       throw classifyError(error);
     }

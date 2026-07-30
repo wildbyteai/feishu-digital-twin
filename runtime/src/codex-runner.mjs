@@ -8,13 +8,12 @@ import {
   realpathSync,
   rmSync
 } from "node:fs";
-import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import { selectEnvironment } from "../../shared/subprocess-environment.mjs";
+import { DECISION_SCHEMA_PATH } from "./decision-contract.mjs";
 import { buildDecisionPrompt, buildPublicSearchPrompt } from "./prompt.mjs";
 
-const decisionSchema = fileURLToPath(new URL("../schemas/codex-decision.schema.json", import.meta.url));
 const CODEX_PERMISSION_PROFILE = "feishu-digital-twin-public-search";
 const ENV_ALLOWLIST = new Set([
   "LANG",
@@ -179,7 +178,7 @@ export function buildCodexArguments(workspace, { publicWebSearch = false } = {})
     "-C",
     workspace,
     "--output-schema",
-    decisionSchema,
+    DECISION_SCHEMA_PATH,
     "--json",
     "-"
   ];

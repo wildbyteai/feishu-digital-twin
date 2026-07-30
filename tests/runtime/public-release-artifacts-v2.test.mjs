@@ -180,6 +180,7 @@ test("公共快照清单覆盖现有完整产品面且排除私有区域", () =>
     "runtime/src/twin-runtime.mjs",
     "shared/authority-labels.mjs",
     "shared/lark-capability-catalog.mjs",
+    "shared/lark-cli-transport.mjs",
     "skills/feishu-daily-work-memory/SKILL.md",
     "skills/feishu-digital-twin-control/SKILL.md",
     "skills/feishu-digital-twin/SKILL.md",
@@ -419,6 +420,7 @@ test("本地 npm tarball 禁止 registry 发布并使用显式公共文件白名
     "runtime/src/daily-memory-privacy.mjs",
     "runtime/src/private-capability-pack.mjs",
     "shared/lark-capability-catalog.mjs",
+    "shared/lark-cli-transport.mjs",
     "skills/feishu-digital-twin/SKILL.md",
     "tests/runtime/private-capability-pack-v2.test.mjs"
   ];
@@ -441,12 +443,16 @@ test("公共发行包含完整 Gateway、Web、MCP、Schema、Fake 与契约测�
   const manifest = readJson("package.json");
   const packaged = new Set(manifest.files);
   const requiredEntries = [
+    "CONTEXT.md",
     "examples/capability-pack.example.json",
     "runtime/schemas/capability-pack.schema.json",
+    "runtime/schemas/codex-decision.schema.json",
     "runtime/src/capability-gateway.mjs",
+    "runtime/src/decision-contract.mjs",
     "runtime/src/private-capability-pack.mjs",
     "runtime/src/public-web-search-adapter.mjs",
     "tests/runtime/capability-gateway-v2.test.mjs",
+    "tests/runtime/decision-contract-v2.test.mjs",
     "tests/runtime/private-capability-pack-v2.test.mjs",
     "tests/runtime/public-web-search-v2.test.mjs"
   ];
@@ -480,6 +486,7 @@ test("公共许可证与依赖台账覆盖外部执行组件", () => {
     /SPDX-FileCopyrightText\s*=\s*"2026 Feishu Digital Twin contributors"/u
   );
   assert.match(reuse, /SPDX-License-Identifier\s*=\s*"Apache-2\.0"/u);
+  assert.match(reuse, /"CONTEXT\.md"/u);
   assert.match(apacheLicense, /Apache License\s+Version 2\.0/u);
   for (const dependency of [
     "Node.js",

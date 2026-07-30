@@ -143,6 +143,14 @@ test("没有后续能力请求的最终回复仍必须包含有效回复模式",
   }), /decision\.response\.mode is invalid/u);
 });
 
+test("任何 AI 决策都必须包含至少一个同源证据引用", async () => {
+  await assert.rejects(processEvent(event(), {
+    config: config(),
+    runtimeState: { getRuntimeState: () => ({ frozen: false }) },
+    runCodex: async () => decision({ source_refs: [] })
+  }), /decision\.source_refs must contain at least one source/u);
+});
+
 test("待本人确认保留具体建议但不拼接内部系统话术", async () => {
   const result = await processEvent(event({
     chat_type: "p2p",

@@ -1,7 +1,6 @@
 import {
   authorityLabel,
   hasCurrentOrLegacyAuthorityLabel,
-  RESPONSE_MODES,
   stripAuthorityLabel
 } from "../../shared/authority-labels.mjs";
 import { trustedDailyMemoryIntent } from "../../shared/daily-memory-trigger.mjs";
@@ -9,7 +8,7 @@ import {
   aiDecisionReasonCode,
   DECISION_REASON_CODES
 } from "./decision-diagnostics.mjs";
-import { validateCapabilityLookupRequest } from "./capability-gateway.mjs";
+import { normalizeDecision } from "./decision-contract.mjs";
 const CONTROL_MESSAGES = new Map([
   ["立即冻结数字分身", { frozen: true, reason: "PRINCIPAL_REQUEST" }]
 ]);
@@ -105,72 +104,20 @@ function availableSourceRefs(event) {
   ]);
 }
 
-function validateDecision(decision, event, { silent = false } = {}) {
-  if (!decision || typeof decision !== "object") {
-    throw new TypeError("Codex decision must be an object");
-  }
-  if (decision.event_id !== event.event_id) {
-    throw new TypeError("decision.event_id does not match event.event_id");
-  }
-  if (!new Set(["ignore", "reply", "confirm"]).has(decision.outcome)) {
-    throw new TypeError("decision.outcome is invalid");
-  }
-  requireText(decision.reason, "decision.reason");
-  if (!Array.isArray(decision.source_refs)) {
-    throw new TypeError("decision.source_refs must be an array");
-  }
+function validateDecisionContext(rawDecision, event, { silent = false } = {}) {
+  const decision = normalizeDecision(rawDecision, { eventId: event.event_id });
   const available = availableSourceRefs(event);
   if (decision.source_refs.some((sourceRef) => !available.has(sourceRef))) {
     throw new TypeError("decision.source_refs contains an unavailable source");
   }
-  if (!Array.isArray(decision.commands)) {
-    throw new TypeError("decision.commands must be an array");
-  }
-  if (decision.commands.length > 5) {
-    throw new TypeError("decision.commands cannot contain more than 5 actions per round");
-  }
-  for (const command of decision.commands) {
-    if (!command || !Array.isArray(command.argv) || command.argv.length < 2) {
-      throw new TypeError("decision command argv is invalid");
-    }
-    if (command.argv.some((value) => typeof value !== "string" || value.length === 0)) {
-      throw new TypeError("decision command argv must contain strings");
-    }
-    requireText(command.reason, "decision command reason");
-    if (!new Set(["auto", "human"]).has(command.confirmation)) {
-      throw new TypeError("decision command confirmation is invalid");
-    }
-  }
-  const lookupRequests = decision.lookup_requests ?? [];
-  const actionRequests = decision.action_requests ?? [];
-  if (!Array.isArray(lookupRequests) || !Array.isArray(actionRequests)) {
-    throw new TypeError("decision capability requests must be arrays");
-  }
-  if (lookupRequests.length > 1) {
-    throw new TypeError("decision.lookup_requests cannot contain more than one query per round");
-  }
-  if (actionRequests.length > 1) {
-    throw new TypeError("decision.action_requests cannot contain more than one action per round");
-  }
-  if (lookupRequests.length + actionRequests.length > 1) {
-    throw new TypeError("decision can contain only one semantic capability request per round");
-  }
-  if (actionRequests.length > 0 && decision.commands.length > 0) {
-    throw new TypeError("decision cannot mix a semantic business action with Feishu commands");
-  }
-  for (const request of lookupRequests) validateCapabilityLookupRequest(request);
-  for (const request of actionRequests) validateCapabilityLookupRequest(request);
   if (decision.outcome !== "ignore") {
     if (
       decision.response === null &&
-      (silent || lookupRequests.length > 0)
+      (silent || decision.lookup_requests.length > 0)
     ) {
       // Trusted system events and intermediate capability rounds do not publish this response.
-    } else {
-      if (!decision.response || !RESPONSE_MODES.has(decision.response.mode)) {
-        throw new TypeError("decision.response.mode is invalid");
-      }
-      requireText(decision.response.text, "decision.response.text");
+    } else if (decision.response === null) {
+      throw new TypeError("decision.response.mode is invalid");
     }
   }
   return decision;
@@ -612,7 +559,7 @@ export async function processEvent(event, {
       ));
     }
     const projectionIntent = aiProjectionIntent(dailyMemoryIntent, config.principal);
-    const decision = validateDecision(await runCodex(
+    const decision = validateDecisionContext(await runCodex(
       projectEventForAI(candidateEvent, projectionIntent),
       definedEntries({
         config: projectConfigForAI(config, candidateEvent, projectionIntent),

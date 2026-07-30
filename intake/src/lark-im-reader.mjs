@@ -1,4 +1,4 @@
-import { runLarkCommand } from "../../executor/src/lark-guard.mjs";
+import { runLarkCommand } from "../../shared/lark-cli-transport.mjs";
 
 async function runCommandJson(command, args) {
   const result = await runLarkCommand([command, ...args]);
