@@ -89,7 +89,10 @@ test("没有后续能力请求的最终回复仍必须包含有效回复模式",
 });
 
 test("待本人确认保留具体建议但不拼接内部系统话术", async () => {
-  const result = await processEvent(event(), {
+  const result = await processEvent(event({
+    chat_type: "p2p",
+    sender_open_id: "ou_principal"
+  }), {
     config: config(),
     runtimeState: { getRuntimeState: () => ({ frozen: false }) },
     runCodex: async () => decision({
@@ -115,7 +118,10 @@ test("待本人确认保留具体建议但不拼接内部系统话术", async ()
 });
 
 test("存在本人确认动作时仍使用统一助理标识", async () => {
-  const result = await processEvent(event(), {
+  const result = await processEvent(event({
+    chat_type: "p2p",
+    sender_open_id: "ou_principal"
+  }), {
     config: config(),
     runtimeState: { getRuntimeState: () => ({ frozen: false }) },
     runCodex: async () => decision({
@@ -261,6 +267,31 @@ test("对方提出审批请求时不能替主体决定，只以助理身份接�
   assert.equal(result.outcome, "reply");
   assert.equal(result.response.text, "🤖 AI助理：收到，我会提醒示例负责人查看并处理。");
   assert.deepEqual(result.action_requests, []);
+});
+
+test("对方触发旧式人工确认命令时也只能转交主体用户", async () => {
+  const result = await processEvent(event({
+    chat_type: "p2p",
+    text: "帮我审批一下"
+  }), {
+    config: config(),
+    runtimeState: { getRuntimeState: () => ({ frozen: false }) },
+    runCodex: async () => decision({
+      outcome: "confirm",
+      response: { mode: "confirmation", text: "你希望通过还是驳回？" },
+      commands: [{
+        argv: ["approval", "+update", "--record-id", "fixture-42"],
+        reason: "处理审批",
+        confirmation: "human"
+      }]
+    })
+  });
+
+  assert.equal(result.outcome, "reply");
+  assert.equal(result.response.text, "🤖 AI助理：收到，我会提醒示例负责人查看并处理。");
+  assert.equal(result.requires_principal_attention, undefined);
+  assert.equal(result.confirmation_commands.length, 1);
+  assert.deepEqual(result.executable_commands, []);
 });
 
 test("同一轮不能混用查询、语义业务动作和飞书命令", async () => {
@@ -434,10 +465,42 @@ test("结构化引用没有可读内容时不调用 AI，直接建议原会话�
   assert.equal(result.response.mode, "suggestion");
   assert.equal(
     result.response.text,
-    "🤖 AI助理：当前消息或引用内容无法读取，无法据此形成可靠结论，请人工检查原消息或链接后继续处理。"
+    "🤖 AI助理：收到，我会提醒示例负责人检查原消息或链接后继续处理。"
   );
+  assert.equal(result.requires_principal_attention, true);
+  assert.equal(result.principal_attention_code, "context_unreadable");
   assert.deepEqual(result.executable_commands, []);
   assert.deepEqual(result.confirmation_commands, []);
+});
+
+test("主体本人发送不可读内容时直接提示检查且不重复通知自己", async () => {
+  const result = await processEvent(event({
+    event_id: "evt-principal-unreadable-context",
+    chat_id: "oc_principal_p2p",
+    chat_type: "p2p",
+    message_id: "om-principal-unreadable-context",
+    sender_open_id: "ou_principal",
+    text: "请处理我回复的内容",
+    parent_message_id: "om-unreadable-parent",
+    reply_to_message_id: "om-unreadable-parent",
+    signals: {
+      context_lookup_required: false,
+      context_unreadable: true
+    },
+    context: []
+  }), {
+    config: config(),
+    runtimeState: { getRuntimeState: () => ({ frozen: false }) },
+    runCodex: async () => {
+      throw new Error("unreadable context must not reach AI");
+    }
+  });
+
+  assert.equal(
+    result.response.text,
+    "🤖 AI助理：当前消息或引用内容无法读取，无法据此形成可靠结论，请人工检查原消息或链接后继续处理。"
+  );
+  assert.equal(result.requires_principal_attention, undefined);
 });
 
 test("当前消息含可读链接时即使引用不可读也继续进入能力路由", async () => {
@@ -558,8 +621,10 @@ test("已有链接时 AI 再次索要链接会被替换为确定性人工兜底"
 
   assert.equal(
     result.response.text,
-    "🤖 AI助理：当前消息或引用内容无法读取，无法据此形成可靠结论，请人工检查原消息或链接后继续处理。"
+    "🤖 AI助理：收到，我会提醒示例负责人检查原消息或链接后继续处理。"
   );
+  assert.equal(result.requires_principal_attention, true);
+  assert.equal(result.principal_attention_code, "context_unreadable");
 });
 
 test("普通消息附带参考链接但无需读取正文时保留正常回复", async () => {

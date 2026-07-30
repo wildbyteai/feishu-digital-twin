@@ -27,7 +27,7 @@ import { runServiceRole } from "../../product/src/service-host.mjs";
 const projectRoot = path.resolve(import.meta.dirname, "../..");
 const cliPath = path.join(projectRoot, "bin/feishu-digital-twin.mjs");
 const fakeCodexFixture = path.join(projectRoot, "tests/fixtures/bin/codex");
-const CURRENT_VERSION = "0.1.21";
+const CURRENT_VERSION = "0.1.22";
 let syntheticInstanceSequence = 0;
 
 function runCli(executable, args, { env = {}, expected = 0 } = {}) {
@@ -70,7 +70,8 @@ function privateCapabilityPackFixture({
   toolName = "records.get",
   allowedFields = ["record_id"],
   requiredFields = ["record_id"],
-  maxBytes = 1024
+  maxBytes = 1024,
+  readinessTool
 } = {}) {
   const directory = mkdtempSync(path.join(tmpdir(), "twin-private-capability-"));
   chmodSync(directory, 0o700);
@@ -89,6 +90,10 @@ function privateCapabilityPackFixture({
     required_fields: requiredFields,
     max_bytes: maxBytes
   };
+  if (readinessTool !== undefined) {
+    pack.tools.unshift({ name: readinessTool, risk: "read" });
+    pack.readiness_check = { tool: readinessTool };
+  }
   writeFileSync(filename, `${JSON.stringify(pack, null, 2)}\n`, { mode: 0o600 });
   chmodSync(filename, 0o600);
   return { filename, pack };
@@ -4088,6 +4093,129 @@ test("Doctor 只列语义能力与稳定代码且绝不调用业务工具", asyn
   assert.equal(requiredHealth.ready_for_service, false);
   assert.equal(requiredHealth.checks.capabilities.status, "fail");
   assert.equal(requiredHealth.checks.capabilities.capabilities[0].required, true);
+});
+
+test("Doctor 只调用显式授权健康工具且授权失效时不再报告就绪", async () => {
+  const { root } = initRoot("private-capability-auth-doctor");
+  const tools = codexFixture();
+  const { filename, pack } = privateCapabilityPackFixture({
+    readinessTool: "records.auth-status"
+  });
+  const candidate = writeCandidate(root, tools, {
+    private_capability_packs: [pack.pack_id],
+    allowed_capabilities: [pack.capabilities[0].capability],
+    required_capabilities: []
+  });
+  json(run([
+    "--root", root,
+    "configure",
+    "--config", candidate,
+    "--capability-pack", filename,
+    "--codex-bin", tools.codexBin,
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data",
+    "--approve-message-scope",
+    "--approve-capability-trust-zone", "internal"
+  ]));
+
+  const calls = [];
+  const expired = await runDirect(["--root", root, "doctor"], {
+    resolveCapabilityServer: async () => ({
+      async listTools() {
+        return {
+          tools: pack.tools.map(({ name }) => ({
+            name,
+            annotations: { readOnlyHint: true }
+          }))
+        };
+      },
+      async callTool(request) {
+        calls.push(structuredClone(request));
+        assert.equal(request.name, pack.readiness_check.tool);
+        return {
+          structuredContent: {
+            ok: false,
+            reauthRequired: true,
+            code: "AUTH_REQUIRED"
+          }
+        };
+      }
+    })
+  });
+
+  assert.equal(expired.status, 1);
+  const health = json(expired);
+  assert.equal(health.healthy, false);
+  assert.equal(health.ready_for_service, false);
+  assert.equal(health.checks.capabilities.status, "fail");
+  assert.equal(health.checks.capabilities.code, "CAPABILITY_NOT_READY");
+  assert.equal(
+    health.checks.capabilities.capabilities[0].code,
+    "CAPABILITY_NOT_READY"
+  );
+  assert.deepEqual(calls, [{ name: pack.readiness_check.tool, arguments: {} }]);
+});
+
+test("Doctor 按能力包隔离同一 MCP 服务器上的授权状态", async () => {
+  const { root } = initRoot("scoped-auth-doctor");
+  const tools = codexFixture();
+  const protectedFixture = privateCapabilityPackFixture({
+    readinessTool: "records.auth-status"
+  });
+  const independentFixture = privateCapabilityPackFixture({
+    packId: "example.catalog",
+    capabilityId: "example.catalog.read",
+    serverRef: protectedFixture.pack.server_ref,
+    toolName: "catalog.get"
+  });
+  const packs = [protectedFixture.pack, independentFixture.pack];
+  const candidate = writeCandidate(root, tools, {
+    private_capability_packs: packs.map(({ pack_id: packId }) => packId),
+    allowed_capabilities: packs.map(({ capabilities }) => capabilities[0].capability),
+    required_capabilities: []
+  });
+  json(run([
+    "--root", root,
+    "configure",
+    "--config", candidate,
+    "--capability-pack", protectedFixture.filename,
+    "--capability-pack", independentFixture.filename,
+    "--codex-bin", tools.codexBin,
+    "--codex-environment-root", tools.codexEnvironmentRoot,
+    "--approve-production-data",
+    "--approve-message-scope",
+    "--approve-capability-trust-zone", "internal"
+  ]));
+
+  const calls = [];
+  const result = await runDirect(["--root", root, "doctor"], {
+    resolveCapabilityServer: async () => ({
+      async listTools() {
+        return {
+          tools: [...new Set(packs.flatMap(({ tools: declared }) => (
+            declared.map(({ name }) => name)
+          )))].map((name) => ({
+            name,
+            annotations: { readOnlyHint: true }
+          }))
+        };
+      },
+      async callTool(request) {
+        calls.push(structuredClone(request));
+        return { structuredContent: { ok: false, code: "AUTH_REQUIRED" } };
+      }
+    })
+  });
+  const health = json(result);
+  const capabilities = new Map(health.checks.capabilities.capabilities.map((item) => [
+    item.capability,
+    item.code
+  ]));
+
+  assert.equal(result.status, 1);
+  assert.equal(capabilities.get("example.records.read"), "CAPABILITY_NOT_READY");
+  assert.equal(capabilities.get("example.catalog.read"), "READY");
+  assert.deepEqual(calls, [{ name: "records.auth-status", arguments: {} }]);
 });
 
 test("Doctor 按 prepare/write 注解识别确认型动作且不调用业务工具", async () => {

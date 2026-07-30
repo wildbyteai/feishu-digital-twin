@@ -45,8 +45,8 @@
 
 - 旧 v1/v2 配置未出现 `private_capability_packs`、`allowed_capabilities` 和 `required_capabilities` 时继续有效：没有私有包就得到空能力集合；缺少 `public_web_search_approved` 或值为 false 时继续保持公开联网关闭。
 - 公共 JSON 示例显式写出三个空数组，避免把示例误解为已安装私有能力。配置只保存包 ID 和语义能力 ID，不保存私有 manifest 路径、MCP server reference、工具名、地址或凭据。
-- 能力包结构兼容由 `schema_version` 决定，当前只接受 `1`。`pack_version` 必须是三段语义版本，用于部署者审计和候选比较，但不会绕过完整 Schema、只读风险、信任域、工具白名单和输入限制校验。
-- 新增能力包、扩大 `allowed_capabilities`，或改变同一包的 server、工具、信任域、操作和输入边界，都必须通过 setup 提供 `--capability-pack`，并对新增内部边界使用 `--approve-capability-trust-zone internal`。普通 `config update --config` 只能收紧或撤销。
+- 能力包结构兼容由 `schema_version` 决定，当前只接受 `1`。能力包可选声明一个 `readiness_check` 只读健康工具；该工具使用空参数并只返回就绪状态，授权失效时能力不可用且 Doctor 报告 `CAPABILITY_NOT_READY`。`pack_version` 必须是三段语义版本，用于部署者审计和候选比较，但不会绕过完整 Schema、只读风险、信任域、工具白名单和输入限制校验。
+- 新增能力包、扩大 `allowed_capabilities`，或改变同一包的 server、工具、授权健康检查、信任域、操作和输入边界，都必须通过 setup 提供 `--capability-pack`，并对新增内部边界使用 `--approve-capability-trust-zone internal`。普通 `config update --config` 只能收紧或撤销。
 - Base“允许能力”严格为“继承”时使用本机上限；显式列表只能取交集。未知项、重复项、空值、混合“继承”或越过本机上限都会失败关闭。
 - 从 `private_capability_packs` 删除包 ID，并同步从 allowed/required 列表删除相关能力后，该包不会再加载。确认不需要回退后再删除 Git 外私有文件，不能把它移入源码树备份。
 

@@ -1,5 +1,57 @@
 import { runLarkCommand } from "../../executor/src/lark-guard.mjs";
-import { authorityLabel } from "../../shared/authority-labels.mjs";
+import { authorityLabel, stripAuthorityLabel } from "../../shared/authority-labels.mjs";
+
+function privateMessageArgv({
+  larkBin,
+  profile,
+  principalOpenId,
+  text,
+  idempotencyKey
+}) {
+  return [
+    larkBin,
+    "--profile",
+    profile,
+    "im",
+    "+messages-send",
+    "--user-id",
+    principalOpenId,
+    "--text",
+    text,
+    "--idempotency-key",
+    idempotencyKey,
+    "--as",
+    "bot",
+    "--format",
+    "json"
+  ];
+}
+
+export async function sendPrivateNotification({
+  larkBin = "lark-cli",
+  profile,
+  principalOpenId,
+  principalName,
+  text,
+  idempotencyKey,
+  productionEnabled,
+  runner = runLarkCommand
+}) {
+  const message = `${authorityLabel("suggestion", principalName)}${stripAuthorityLabel(text)}`;
+  const argv = privateMessageArgv({
+    larkBin,
+    profile,
+    principalOpenId,
+    text: message,
+    idempotencyKey
+  });
+  if (!productionEnabled) return { status: "preview-only", argv };
+  const result = await runner(argv);
+  return {
+    status: result.exit_code === 0 ? "complete" : "failed",
+    exit_code: result.exit_code
+  };
+}
 
 export async function sendPrivateConfirmation({
   larkBin = "lark-cli",
@@ -25,23 +77,13 @@ export async function sendPrivateConfirmation({
     `确认编号：${confirmationId}`,
     `请回复“确认 ${confirmationId}”或“拒绝 ${confirmationId}”。`
   ].filter(Boolean).join("\n");
-  const argv = [
+  const argv = privateMessageArgv({
     larkBin,
-    "--profile",
     profile,
-    "im",
-    "+messages-send",
-    "--user-id",
     principalOpenId,
-    "--text",
     text,
-    "--idempotency-key",
-    `twin-confirm-${confirmationId}`,
-    "--as",
-    "bot",
-    "--format",
-    "json"
-  ];
+    idempotencyKey: `twin-confirm-${confirmationId}`
+  });
   if (!productionEnabled) return { status: "preview-only", argv };
   const result = await runner(argv);
   return {

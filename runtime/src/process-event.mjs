@@ -288,7 +288,9 @@ function visibleResponse(response, principalName, { forceMode } = {}) {
   return { mode, text: `${authorityLabel(mode, principalName)}${body}` };
 }
 
-function humanContextFallback(event, state, principalName) {
+function humanContextFallback(event, state, principal) {
+  const notifyPrincipal = state.frozen !== true &&
+    event.sender_open_id !== principal.open_id;
   return {
     event_id: event.event_id,
     outcome: state.frozen === true ? "draft" : "reply",
@@ -296,12 +298,18 @@ function humanContextFallback(event, state, principalName) {
     reason_code: DECISION_REASON_CODES.contextUnreadable,
     response: visibleResponse({
       mode: "suggestion",
-      text: HUMAN_CONTEXT_FALLBACK
-    }, principalName),
+      text: notifyPrincipal
+        ? `收到，我会提醒${principal.name}检查原消息或链接后继续处理。`
+        : HUMAN_CONTEXT_FALLBACK
+    }, principal.name),
     commands: [],
     source_refs: [event.message_id],
     executable_commands: [],
-    confirmation_commands: []
+    confirmation_commands: [],
+    ...(notifyPrincipal ? {
+      requires_principal_attention: true,
+      principal_attention_code: "context_unreadable"
+    } : {})
   };
 }
 
@@ -533,7 +541,7 @@ export async function processEvent(event, {
       return finish(runtimeState, event.event_id, humanContextFallback(
         event,
         state,
-        config.principal.name
+        config.principal
       ));
     }
     const projectionIntent = aiProjectionIntent(dailyMemoryIntent, config.principal);
@@ -551,7 +559,7 @@ export async function processEvent(event, {
       return finish(runtimeState, event.event_id, humanContextFallback(
         event,
         state,
-        config.principal.name
+        config.principal
       ));
     }
     if (decision.outcome === "ignore") {
@@ -585,11 +593,18 @@ export async function processEvent(event, {
         }, config.principal.name),
         action_requests: [],
         executable_commands: [],
-        confirmation_commands: []
+        confirmation_commands: [],
+        requires_principal_attention: true,
+        principal_attention_code: "participant_authority_required"
       });
     }
 
     const draftOnly = state.frozen === true;
+    const participantConfirmation = !draftOnly &&
+      event.sender_open_id !== config.principal.open_id && (
+        decision.outcome === "confirm" ||
+        decision.commands.some((command) => command.confirmation === "human")
+      );
     const actionRequests = draftOnly ? [] : decision.action_requests ?? [];
     const confirmationCommands = draftOnly ? [] : decision.commands.filter((command) =>
       command.confirmation === "human" || decision.outcome === "confirm"
@@ -597,7 +612,9 @@ export async function processEvent(event, {
     const executableCommands = draftOnly ? [] : decision.commands.filter((command) =>
       command.confirmation === "auto" && decision.outcome !== "confirm"
     );
-    const forceMode = draftOnly
+    const forceMode = participantConfirmation
+      ? "representative"
+      : draftOnly
       ? "suggestion"
       : decision.outcome === "confirm" || confirmationCommands.length > 0 || actionRequests.length > 0
       ? "confirmation"
@@ -605,16 +622,26 @@ export async function processEvent(event, {
 
     return finish(runtimeState, event.event_id, {
       ...decision,
-      outcome: draftOnly ? "draft" : decision.outcome,
-      reason_code: aiDecisionReasonCode(draftOnly ? "draft" : decision.outcome, {
-        contextFetched: candidateEvent.context_meta?.fetched === true
-      }),
-      response: decision.response === null
+      outcome: draftOnly ? "draft" : participantConfirmation ? "reply" : decision.outcome,
+      reason_code: aiDecisionReasonCode(
+        draftOnly ? "draft" : participantConfirmation ? "reply" : decision.outcome,
+        { contextFetched: candidateEvent.context_meta?.fetched === true }
+      ),
+      response: participantConfirmation
+        ? visibleResponse({
+            mode: "representative",
+            text: `收到，我会提醒${config.principal.name}查看并处理。`
+          }, config.principal.name)
+        : decision.response === null
         ? null
         : visibleResponse(decision.response, config.principal.name, { forceMode }),
       action_requests: actionRequests,
       executable_commands: executableCommands,
-      confirmation_commands: confirmationCommands
+      confirmation_commands: confirmationCommands,
+      ...(participantConfirmation && confirmationCommands.length === 0 ? {
+        requires_principal_attention: true,
+        principal_attention_code: "participant_authority_required"
+      } : {})
     });
   } catch (error) {
     runtimeState?.releaseEvent?.(event.event_id);

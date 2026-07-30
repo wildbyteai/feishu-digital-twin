@@ -46,6 +46,7 @@ import { CodexInferenceAdapter } from "../../runtime/src/inference-adapter.mjs";
 import { createCodexMcpResolver } from "../../runtime/src/codex-mcp-resolver.mjs";
 import {
   advertisedMcpToolRisks,
+  checkPrivateCapabilityReadiness,
   compilePrivateCapabilityPacks
 } from "../../runtime/src/private-capability-pack.mjs";
 import { PUBLIC_WEB_SEARCH_CAPABILITY } from "../../runtime/src/public-web-search-adapter.mjs";
@@ -362,6 +363,7 @@ function capabilityBindings(packs) {
       capability.capability,
       JSON.stringify({
         server_ref: pack.server_ref,
+        readiness_check: pack.readiness_check ?? null,
         trust_zone: capability.trust_zone,
         operations: capability.operations.map(({ operation, tool, input_constraints }) => ({
           operation,
@@ -374,6 +376,7 @@ function capabilityBindings(packs) {
       action.capability,
       JSON.stringify({
         server_ref: pack.server_ref,
+        readiness_check: pack.readiness_check ?? null,
         trust_zone: action.trust_zone,
         operation: action.operation,
         prepare_tool: action.prepare_tool,
@@ -3223,9 +3226,29 @@ async function capabilitiesDoctor(configPath, config, resolveCapabilityServer, e
         const listed = await boundedCapabilityDoctorCall(() => server.listTools());
         if (listed.ok === true) toolRisks = advertisedMcpToolRisks(listed.value);
       }
+      const readOnlyTools = new Set([...(toolRisks ?? new Map()).entries()]
+        .filter(([, risk]) => risk === "read")
+        .map(([name]) => name));
+      const readinessChecks = new Map(allowedPacks
+        .filter((candidate) => candidate.server_ref === pack.server_ref)
+        .map((candidate) => candidate.readiness_check)
+        .filter(Boolean)
+        .map((readinessCheck) => [readinessCheck.tool, readinessCheck]));
+      const readinessResults = new Map();
+      for (const readinessCheck of readinessChecks.values()) {
+        let passed = false;
+        if (toolRisks !== null) {
+          const checked = await boundedCapabilityDoctorCall(() => (
+            checkPrivateCapabilityReadiness(server, readinessCheck, readOnlyTools)
+          ));
+          passed = checked.ok === true && checked.value === true;
+        }
+        readinessResults.set(readinessCheck.tool, passed);
+      }
       serverReadiness.set(pack.server_ref, {
         latency_ms: Math.max(0, Date.now() - startedAt),
-        toolRisks
+        toolRisks,
+        readinessResults
       });
     }
 
@@ -3244,12 +3267,20 @@ async function capabilitiesDoctor(configPath, config, resolveCapabilityServer, e
             [declaration.confirm_tool, "write"]
           ]
         : declaration.operations.map(({ tool }) => [tool, "read"]);
-      const ready = readiness.toolRisks !== null && declaredTools.every(([tool, risk]) => (
+      const toolsReady = readiness.toolRisks !== null && declaredTools.every(([tool, risk]) => (
         readiness.toolRisks.get(tool) === risk
       ));
+      const readinessPassed = pack.readiness_check === undefined || (
+        readiness.readinessResults.get(pack.readiness_check.tool) === true
+      );
+      const code = !toolsReady
+        ? "CAPABILITY_UNAVAILABLE"
+        : !readinessPassed
+          ? "CAPABILITY_NOT_READY"
+          : "READY";
       return {
         capability,
-        code: ready ? "READY" : "CAPABILITY_UNAVAILABLE",
+        code,
         latency_ms: readiness.latency_ms,
         ...(required.has(capability) ? { required: true } : {})
       };
@@ -3265,10 +3296,15 @@ async function capabilitiesDoctor(configPath, config, resolveCapabilityServer, e
       });
     }
     const unavailable = capabilities.filter(({ code }) => code !== "READY");
+    const notReady = unavailable.some(({ code }) => code === "CAPABILITY_NOT_READY");
     const requiredUnavailable = unavailable.some(({ capability }) => required.has(capability));
     return check(
-      requiredUnavailable ? "fail" : unavailable.length > 0 ? "warning" : "pass",
-      unavailable.length > 0 ? "CAPABILITY_UNAVAILABLE" : "READY",
+      notReady || requiredUnavailable ? "fail" : unavailable.length > 0 ? "warning" : "pass",
+      notReady
+        ? "CAPABILITY_NOT_READY"
+        : unavailable.length > 0
+          ? "CAPABILITY_UNAVAILABLE"
+          : "READY",
       { capabilities }
     );
   } catch {
