@@ -158,6 +158,21 @@ test("Guard 收到当前助理标识时不会在真实执行链路再次添加",
   );
 });
 
+test("Guard 归一化非标准助理前缀且不重复添加", () => {
+  const guard = guardWithRunner(async () => ({ exit_code: 0, stdout: "{}", stderr: "" }));
+
+  for (const text of ["AI助理:正文", "AI助理 ：正文", "🤖 AI助理：AI助理：正文"]) {
+    const plan = guard.plan({
+      argv: ["im", "+messages-reply", "--message-id", "om_x", "--text", text]
+    }, { productionEnabled: true, frozen: false });
+
+    assert.equal(
+      plan.execute_argv[plan.execute_argv.indexOf("--text") + 1],
+      "🤖 AI助理：正文"
+    );
+  }
+});
+
 test("Guard 把错误主体和重复权威标签归一化为一个可信标签", () => {
   const guard = guardWithRunner(async () => ({ exit_code: 0, stdout: "{}", stderr: "" }));
   const plan = guard.plan({

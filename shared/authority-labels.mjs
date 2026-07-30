@@ -1,7 +1,7 @@
 export const RESPONSE_MODES = new Set(["representative", "suggestion", "confirmation"]);
 
 const AI_ASSISTANT_LABEL = "🤖 AI助理：";
-const BARE_AI_ASSISTANT_LABEL = "AI助理：";
+const AI_ASSISTANT_LABEL_PATTERN = /^(?:🤖\s*)?AI助理\s*[:：]\s*/u;
 const LEGACY_AUTHORITY_LABEL = /^🤖【(?:数字分身|代表发言|建议|待[^】]+确认)】/u;
 
 export function authorityLabel(mode, principalName) {
@@ -12,14 +12,11 @@ export function authorityLabel(mode, principalName) {
 export function stripAuthorityLabel(text) {
   let result = text.trim();
   while (
-    result.startsWith(AI_ASSISTANT_LABEL) ||
-    result.startsWith(BARE_AI_ASSISTANT_LABEL) ||
+    AI_ASSISTANT_LABEL_PATTERN.test(result) ||
     LEGACY_AUTHORITY_LABEL.test(result)
   ) {
-    result = result.startsWith(AI_ASSISTANT_LABEL)
-      ? result.slice(AI_ASSISTANT_LABEL.length).trimStart()
-      : result.startsWith(BARE_AI_ASSISTANT_LABEL)
-        ? result.slice(BARE_AI_ASSISTANT_LABEL.length).trimStart()
+    result = AI_ASSISTANT_LABEL_PATTERN.test(result)
+      ? result.replace(AI_ASSISTANT_LABEL_PATTERN, "").trimStart()
       : result.replace(LEGACY_AUTHORITY_LABEL, "").trimStart();
   }
   return result;
