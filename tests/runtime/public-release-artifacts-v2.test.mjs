@@ -486,6 +486,7 @@ test("公共许可证与依赖台账覆盖外部执行组件", () => {
     /SPDX-FileCopyrightText\s*=\s*"2026 Feishu Digital Twin contributors"/u
   );
   assert.match(reuse, /SPDX-License-Identifier\s*=\s*"Apache-2\.0"/u);
+  assert.match(reuse, /"CONTEXT\.md"/u);
   assert.match(apacheLicense, /Apache License\s+Version 2\.0/u);
   for (const dependency of [
     "Node.js",
